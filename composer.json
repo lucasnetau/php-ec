@@ -1,0 +1,29 @@
+{
+  "name": "lucas/eventcorrelation",
+  "description": "Event Stream correlation engine for PHP",
+  "keywords": ["php-ec", "event", "stream"],
+  "license": "MIT",
+  "authors": [ { "name": "James Lucas", "email": "james@lucas.net.au" } ],
+  "type": "library",
+  "require": {
+    "php": ">=7.2",
+    "ext-json": "*",
+    "evenement/evenement": "^3.0",
+    "symfony/polyfill-php73": "^1.10"
+    },
+  "require-dev": {
+    "ext-pcntl": "*",
+    "ext-eio": "^2.0",
+    "clue/ndjson-react": "^1.0",
+    "react/child-process": "^0.5.2",
+    "react/event-loop": "^1.0",
+    "react/http": "^0.8.3",
+    "react/filesystem": "^0.1.2"
+  },
+  "autoload": {
+    "psr-4": {"Lucas\\EventCorrelation\\": "src/Lucas/EventCorrelation"}
+  },
+  "autoload-dev": {
+    "classmap": [ "tests/EventProcessors" ]
+  }
+}
