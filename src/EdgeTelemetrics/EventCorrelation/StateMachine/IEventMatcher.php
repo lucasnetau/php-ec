@@ -1,12 +1,12 @@
 <?php declare(strict_types=1);
 
-namespace Lucas\EventCorrelation\StateMachine;
+namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
-use Lucas\EventCorrelation\Event;
+use EdgeTelemetrics\EventCorrelation\Event;
 
 /**
  * Interface IEventMatcher
- * @package Lucas\EventCorrelation\StateMachine
+ * @package EdgeTelemetrics\EventCorrelation\StateMachine
  *
  * Interface declaring that we emit can match and handle events.
  */

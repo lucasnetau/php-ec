@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-namespace Lucas\EventCorrelation;
+namespace EdgeTelemetrics\EventCorrelation;
 
 use Evenement\EventEmitterTrait;
 use Evenement\EventEmitterInterface;

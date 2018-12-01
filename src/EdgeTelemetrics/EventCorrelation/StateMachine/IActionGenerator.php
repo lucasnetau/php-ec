@@ -1,10 +1,10 @@
 <?php declare(strict_types=1);
 
-namespace Lucas\EventCorrelation\StateMachine;
+namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
 /**
  * Interface IActionGenerator
- * @package Lucas\EventCorrelation\StateMachine
+ * @package EdgeTelemetrics\EventCorrelation\StateMachine
  *
  * Interface declaring that we emit actions to be executed.
  */

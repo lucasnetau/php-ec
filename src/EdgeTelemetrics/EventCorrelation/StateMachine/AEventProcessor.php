@@ -1,13 +1,13 @@
 <?php declare(strict_types=1);
 
-namespace Lucas\EventCorrelation\StateMachine;
+namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
-use Lucas\EventCorrelation\Event;
+use EdgeTelemetrics\EventCorrelation\Event;
 use Evenement\EventEmitterTrait;
 
 /**
  * Class StateMachine
- * @package Lucas\EventCorrelation\StateMachine
+ * @package EdgeTelemetrics\EventCorrelation\StateMachine
  *
  * Types of EventProcessors and the various parameters and functions
  *

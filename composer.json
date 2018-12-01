@@ -1,5 +1,5 @@
 {
-  "name": "lucas/eventcorrelation",
+  "name": "edgetelemetrics/eventcorrelation",
   "description": "Event Stream correlation engine for PHP",
   "keywords": ["php-ec", "event", "stream"],
   "license": "MIT",
@@ -21,7 +21,7 @@
     "react/filesystem": "^0.1.2"
   },
   "autoload": {
-    "psr-4": {"Lucas\\EventCorrelation\\": "src/Lucas/EventCorrelation"}
+    "psr-4": {"EdgeTelemetrics\\EventCorrelation\\": "src/EdgeTelemetrics/EventCorrelation"}
   },
   "autoload-dev": {
     "classmap": [ "tests/EventProcessors" ]

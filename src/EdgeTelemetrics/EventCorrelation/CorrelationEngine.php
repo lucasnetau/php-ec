@@ -1,10 +1,10 @@
 <?php declare(strict_types=1);
 
-namespace Lucas\EventCorrelation;
+namespace EdgeTelemetrics\EventCorrelation;
 
-use Lucas\EventCorrelation\StateMachine\IEventMatcher;
-use Lucas\EventCorrelation\StateMachine\IEventGenerator;
-use Lucas\EventCorrelation\StateMachine\IActionGenerator;
+use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
+use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;
+use EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator;
 
 use Evenement\EventEmitterInterface;
 use Evenement\EventEmitterTrait;
@@ -181,12 +181,12 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function constructMatcher($className)
     {
-        if (is_a($className, 'Lucas\EventCorrelation\StateMachine\IEventMatcher', true))
+        if (is_a($className, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher', true))
         {
             /** @var IEventMatcher|IActionGenerator $matcher */
             $matcher = new $className();
-            if (is_a($matcher, 'Lucas\EventCorrelation\StateMachine\IEventGenerator') ||
-                is_a($matcher, 'Lucas\EventCorrelation\StateMachine\IActionGenerator')
+            if (is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator') ||
+                is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator')
             ) {
                 /** @var IEventGenerator $matcher */
                 $matcher->on('data', [$this, 'handleEmit']);
@@ -195,18 +195,18 @@ class CorrelationEngine implements EventEmitterInterface {
         }
         else
         {
-            throw new \RuntimeException("{$className} does not implement Lucas\EventCorrelation\StateMachine\IEventMatcher");
+            throw new \RuntimeException("{$className} does not implement EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher");
         }
     }
 
     public function handleEmit($data)
     {
         /** Check if this is an event */
-        if (is_a($data, 'Lucas\EventCorrelation\IEvent'))
+        if (is_a($data, 'EdgeTelemetrics\EventCorrelation\IEvent'))
         {
             $this->emit('event', [$data]);
         }
-        elseif (is_a($data, 'Lucas\EventCorrelation\Action'))
+        elseif (is_a($data, 'EdgeTelemetrics\EventCorrelation\Action'))
         {
             $this->emit('action', [$data]);
         }
