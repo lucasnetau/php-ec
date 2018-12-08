@@ -25,4 +25,14 @@ class Action implements \JsonSerializable {
         return ['cmd' => $this->cmd,
                 'vars' => $this->vars];
     }
+
+    public function getCmd()
+    {
+        return $this->cmd;
+    }
+
+    public function getVars()
+    {
+        return $this->vars;
+    }
 }
