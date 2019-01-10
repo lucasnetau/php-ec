@@ -381,7 +381,6 @@ class CorrelationEngine implements EventEmitterInterface {
                 $state['matchers'][] = serialize($matcher);
             }
         }
-        $this->dirty = false;
         return $state;
     }
 
