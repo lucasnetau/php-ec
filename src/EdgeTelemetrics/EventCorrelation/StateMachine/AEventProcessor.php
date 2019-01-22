@@ -6,7 +6,7 @@ use EdgeTelemetrics\EventCorrelation\Event;
 use Evenement\EventEmitterTrait;
 
 /**
- * Class StateMachine
+ * Class AEventProcessor
  * @package EdgeTelemetrics\EventCorrelation\StateMachine
  *
  * Types of EventProcessors and the various parameters and functions
@@ -146,7 +146,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @param Event $event
      * @return bool
      */
-    public function acceptEvent(Event $event)
+    public function acceptEvent(Event $event) : bool
     {
         return true;
     }
