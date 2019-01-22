@@ -3,11 +3,13 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 class Event implements IEvent {
+    protected $id;
+
     protected $event;
 
     protected $datetime;
 
-    protected $received_time;
+    protected $receivedTime;
 
     /**
      * Event constructor.
@@ -17,7 +19,8 @@ class Event implements IEvent {
     public function __construct(array $kvp)
     {
         //$this->datetime = DateTime::createFromFormat('U', $kvp['datetime'], new DateTimeZone('UTC'));
-        if (isset($kvp['datetime'])) {
+        if (isset($kvp['datetime']))
+        {
             $this->datetime = new \DateTimeImmutable($kvp['datetime'], new \DateTimeZone('UTC'));
             unset($kvp['datetime']);
         }
@@ -55,23 +58,28 @@ class Event implements IEvent {
      */
     public function setReceivedTime(\DateTimeInterface $time)
     {
-        $this->received_time = $time;
+        $this->receivedTime = $time;
     }
 
     /**
-     * Get the event datetime. If the received_time property is set this will be used
+     * Get the event datetime. If the receivedTime property is set this will be used
      * as the server time when received was too different from the event timestamp
      * @return \DateTimeImmutable
      */
     public function getDatetime()
     {
-        if (null === $this->received_time)
+        if (null === $this->receivedTime)
         {
             return $this->datetime;
         }
         else {
-            return $this->received_time;
+            return $this->receivedTime;
         }
+    }
+
+    public function getMetrics()
+    {
+        return false;
     }
 
     /**
@@ -81,8 +89,17 @@ class Event implements IEvent {
     {
         $object = get_object_vars($this);
         $object['datetime'] = $this->datetime->format('c');
-        if (null !== $this->received_time) {
-            $object['received_time'] = $this->datetime->format('c');
+        if (null !== $this->receivedTime) {
+            $object['receivedTime'] = $this->receivedTime->format('c');
+        }
+        else
+        {
+            unset($object['receivedTime']);
+        }
+        $metrics = $this->getMetrics();
+        if ($metrics)
+        {
+            $object['metrics'] = $metrics;
         }
         return $object;
     }
@@ -103,11 +120,11 @@ class Event implements IEvent {
     {
         $data = json_decode($data, true);
         $this->datetime = new \DateTimeImmutable($data['datetime']);
-        if (isset($data['received_time'])) {
-            $this->received_time = new \DateTimeImmutable($data['received_time']);
-            unset($data['received_time']);
-        }
         unset($data['datetime']);
+        if (isset($data['receivedTime'])) {
+            $this->receivedTime = new \DateTimeImmutable($data['receivedTime']);
+            unset($data['receivedTime']);
+        }
         foreach($data as $key => $value)
         {
             $this->$key = $value;
