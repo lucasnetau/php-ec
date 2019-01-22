@@ -14,6 +14,11 @@ class Action implements \JsonSerializable {
      */
     protected $vars;
 
+    /**
+     * Action constructor.
+     * @param string $cmd
+     * @param array $vars
+     */
     public function __construct(string $cmd, array $vars)
     {
         $this->cmd = $cmd;
