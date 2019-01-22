@@ -181,12 +181,12 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function constructMatcher($className)
     {
-        if (is_a($className, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher', true))
+        if (is_a($className, EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher::class, true))
         {
             /** @var IEventMatcher|IActionGenerator $matcher */
             $matcher = new $className();
-            if (is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator') ||
-                is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator')
+            if (is_a($matcher, EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator::class) ||
+                is_a($matcher, EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator::class)
             ) {
                 /** @var IEventGenerator $matcher */
                 $matcher->on('data', [$this, 'handleEmit']);
