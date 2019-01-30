@@ -57,6 +57,9 @@ class CorrelationEngine implements EventEmitterInterface {
         $timedOutMatchers = [];
         $suppress = false;
 
+        /** Record that we have seen an event of this type */
+        $this->incrStat('seen', (string)$event->event);
+
         /** If the event stream is live we want to make sure the event timestamp is within
          *  10 minutes of the current time, otherwise we will set it to the server time.
          */
@@ -90,6 +93,8 @@ class CorrelationEngine implements EventEmitterInterface {
                     {
                         $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
                     }
+                    /** Record that we handled an event of this type */
+                    $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
                 }
 
                 if ($this->isFlagSet($result, $matcher::EVENT_TIMEOUT))
@@ -101,6 +106,8 @@ class CorrelationEngine implements EventEmitterInterface {
                 if ($this->isFlagSet($result, $matcher::EVENT_SUPPRESS))
                 {
                     $suppress = true;
+                    /** Record that the event was suppressed */
+                    $this->incrStat('suppressed', (string)$event->event);
                     break;
                 }
             }
@@ -126,6 +133,8 @@ class CorrelationEngine implements EventEmitterInterface {
                 {
                     $handledMatchers[] = $matcher;
                     $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
+                    $this->incrStat('init_matcher', $class);
+                    $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
                 }
 
                 if (!$matcher->complete())
@@ -136,6 +145,8 @@ class CorrelationEngine implements EventEmitterInterface {
                 /** The current matcher has told us to suppress further processing of this event, break out of processing any further */
                 if ($this->isFlagSet($result, $matcher::EVENT_SUPPRESS))
                 {
+                    /** Record that the event was suppressed */
+                    $this->incrStat('suppressed', (string)$event->event);
                     break;
                 }
             }
@@ -149,6 +160,8 @@ class CorrelationEngine implements EventEmitterInterface {
 
             if ($matcher->complete())
             {
+                /** Record stat of matcher completing */
+                $this->incrStat('completed_matcher', get_class($matcher));
                 unset($this->eventProcessors[spl_object_hash($matcher)]);
                 unset($matcher);
                 continue;
@@ -159,6 +172,8 @@ class CorrelationEngine implements EventEmitterInterface {
         {
             $this->removeTimeout($matcher);
             $matcher->fire();
+            /** Record stat of matcher timeout */
+            $this->incrStat('completed_matcher', get_class($matcher));
             unset($this->eventProcessors[spl_object_hash($matcher)]);
             unset($matcher);
         }
@@ -181,12 +196,12 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function constructMatcher($className)
     {
-        if (is_a($className, EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher::class, true))
+        if (is_a($className, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher', true))
         {
             /** @var IEventMatcher|IActionGenerator $matcher */
             $matcher = new $className();
-            if (is_a($matcher, EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator::class) ||
-                is_a($matcher, EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator::class)
+            if (is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator') ||
+                is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator')
             ) {
                 /** @var IEventGenerator $matcher */
                 $matcher->on('data', [$this, 'handleEmit']);
@@ -204,15 +219,19 @@ class CorrelationEngine implements EventEmitterInterface {
         /** Check if this is an event */
         if (is_a($data, 'EdgeTelemetrics\EventCorrelation\IEvent'))
         {
+            /** @var \EdgeTelemetrics\EventCorrelation\IEvent $data */
+            $this->incrStat('emit_event', $data->event);
             $this->emit('event', [$data]);
         }
         elseif (is_a($data, 'EdgeTelemetrics\EventCorrelation\Action'))
         {
+            /** @var \EdgeTelemetrics\EventCorrelation\Action $data */
+            $this->incrStat('emit_action', $data->getCmd());
             $this->emit('action', [$data]);
         }
         else
         {
-            throw new \RuntimeException("Expected event to implement IEvent");
+            throw new \RuntimeException("Expected rules to emit an IEvent or Action. Unable to handle object of class " . get_class($data));
         }
     }
 
@@ -357,6 +376,7 @@ class CorrelationEngine implements EventEmitterInterface {
         $state['eventstream_live'] = $this->eventstream_live;
         $state['matchers'] = [];
         $state['events'] = [];
+        $state['statistics'] = $this->statistics;
         foreach($this->waitingForNextEvent as $matchers)
         {
             foreach($matchers as $matcher)
@@ -404,5 +424,15 @@ class CorrelationEngine implements EventEmitterInterface {
     public function clearDirtyFlag()
     {
         $this->dirty = false;
+    }
+
+    /**
+     * @param string $name
+     * @param string $group
+     * @param int $incr
+     */
+    public function incrStat(string $group, string $name, $incr = 1)
+    {
+        $this->statistics[$group][$name] += $incr;
     }
 }
