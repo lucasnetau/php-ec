@@ -152,6 +152,11 @@ class CorrelationEngine implements EventEmitterInterface {
             }
         }
 
+        if (count($handledMatchers) == 0)
+        {
+            $this->incrStat('unhandled', (string)$event->event);
+        }
+
         /** For any matchers that processed this event fire any actions, then update timeout or destroy if complete **/
         foreach($handledMatchers as $matcher)
         {
