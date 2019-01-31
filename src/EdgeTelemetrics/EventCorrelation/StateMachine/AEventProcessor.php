@@ -276,6 +276,11 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         $return['actionFired'] = $this->actionFired;
         $return['isTimedOut'] = $this->isTimedOut;
 
+        if (method_exists($this, 'serializeMetrics'))
+        {
+            $return['metrics'] = $this->serializeMetrics();
+        }
+
         return $return;
     }
 
@@ -291,6 +296,11 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
         $this->actionFired = $data['actionFired'];
         $this->isTimedOut = $data['isTimedOut'];
+        if (isset($data['metrics']) && method_exists($this, 'unserializeMetrics'))
+        {
+            $this->unserializeMetrics($data['metrics']);
+            unset($data['metrics']);
+        }
         $this->updateTimeout();
     }
 

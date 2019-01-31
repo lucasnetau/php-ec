@@ -91,10 +91,6 @@ class Event implements IEvent {
         {
             unset($object['receivedTime']);
         }
-        if (method_exists($this, 'serializeMetrics'))
-        {
-            $object['metrics'] = $this->serializeMetrics();
-        }
         return $object;
     }
 
@@ -118,11 +114,6 @@ class Event implements IEvent {
         if (isset($data['receivedTime'])) {
             $this->receivedTime = new \DateTimeImmutable($data['receivedTime']);
             unset($data['receivedTime']);
-        }
-        if (isset($data['metrics']) && method_exists($this, 'unserializeMetrics'))
-        {
-            $this->unserializeMetrics($data['metrics']);
-            unset($data['metrics']);
         }
         foreach($data as $key => $value)
         {
