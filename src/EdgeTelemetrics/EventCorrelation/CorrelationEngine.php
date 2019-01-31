@@ -433,6 +433,8 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function incrStat(string $group, string $name, $incr = 1)
     {
+        if (!isset($this->statistics[$group])) { $this->statistics[$group] = []; }
+        if (!isset($this->statistics[$group][$name])) { $this->statistics[$group][$name] = 0; }
         $this->statistics[$group][$name] += $incr;
     }
 }
