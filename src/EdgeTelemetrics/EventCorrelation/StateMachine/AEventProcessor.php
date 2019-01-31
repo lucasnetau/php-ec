@@ -60,6 +60,11 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     protected $consumedEvents = [];
 
     /**
+     * @var array Used by an event processor to keep track of the context of processing.
+     */
+    protected $context = [];
+
+    /**
      * @var bool Flag if the processor has completed due to timeout been reached
      */
     protected $isTimedOut = false;
@@ -275,6 +280,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
         $return['actionFired'] = $this->actionFired;
         $return['isTimedOut'] = $this->isTimedOut;
+        $return['context'] = $this->context;
 
         if (method_exists($this, 'serializeMetrics'))
         {
@@ -296,6 +302,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
         $this->actionFired = $data['actionFired'];
         $this->isTimedOut = $data['isTimedOut'];
+        $this->context = $data['context'];
         if (isset($data['metrics']) && method_exists($this, 'unserializeMetrics'))
         {
             $this->unserializeMetrics($data['metrics']);
