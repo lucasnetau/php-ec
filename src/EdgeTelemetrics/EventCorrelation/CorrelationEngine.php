@@ -135,11 +135,17 @@ class CorrelationEngine implements EventEmitterInterface {
                     $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
                     $this->incrStat('init_matcher', $class);
                     $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
-                }
 
-                if (!$matcher->complete())
+                    if (!$matcher->complete())
+                    {
+                        $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
+                    }
+                }
+                else
                 {
-                    $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
+                    //Matcher did not want our event after all, discard it.
+                    unset($matcher);
+                    continue;
                 }
 
                 /** The current matcher has told us to suppress further processing of this event, break out of processing any further */
