@@ -7,6 +7,12 @@ use React\ChildProcess\Process;
 use React\EventLoop\TimerInterface;
 
 use function array_key_first;
+use function fwrite;
+use function tempnam;
+use function json_encode;
+use function json_decode;
+use function memory_get_usage;
+use function memory_get_peak_usage;
 
 use const STDERR;
 use const PHP_EOL;
