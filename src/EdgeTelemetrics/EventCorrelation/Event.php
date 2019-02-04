@@ -2,6 +2,13 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use function ucfirst;
+use function method_exists;
+use function property_exists;
+use function get_object_vars;
+use function json_encode;
+use function json_decode;
+
 class Event implements IEvent {
     protected $id;
 

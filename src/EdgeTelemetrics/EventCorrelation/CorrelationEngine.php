@@ -9,6 +9,17 @@ use EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator;
 use Evenement\EventEmitterInterface;
 use Evenement\EventEmitterTrait;
 
+use function abs;
+use function array_key_exists;
+use function get_class;
+use function in_array;
+use function spl_object_hash;
+use function count;
+use function is_a;
+use function array_multisort;
+use function array_map;
+use function serialize;
+
 class CorrelationEngine implements EventEmitterInterface {
     use EventEmitterTrait;
 

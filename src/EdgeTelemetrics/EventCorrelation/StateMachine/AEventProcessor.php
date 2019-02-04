@@ -4,6 +4,15 @@ namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
 use EdgeTelemetrics\EventCorrelation\Event;
 use Evenement\EventEmitterTrait;
+use function count;
+use function in_array;
+use function array_key_first;
+use function array_key_last;
+use function array_map;
+use function spl_object_hash;
+use function method_exists;
+use function json_encode;
+use function json_decode;
 
 /**
  * Class AEventProcessor
@@ -173,7 +182,6 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     {
         return $this->consumedEvents;
     }
-
 
     /**
      * Get the data time of the first event consumed
