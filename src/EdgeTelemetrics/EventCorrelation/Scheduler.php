@@ -5,6 +5,10 @@ namespace EdgeTelemetrics\EventCorrelation;
 use React\EventLoop\LoopInterface;
 use React\ChildProcess\Process;
 use React\EventLoop\TimerInterface;
+use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
+use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
+use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
+use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 
 use function array_key_first;
 use function fwrite;
@@ -41,14 +45,44 @@ class Scheduler {
      */
     protected $input_processes = [];
 
+    /**
+     * @var array Class list of rules
+     */
     protected $rules = [];
 
+    /**
+     * @var array Configuration for input processes
+     */
     protected $input_processes_config = [];
 
+    /**
+     * @var array
+     */
+    protected $input_processes_checkpoints = [];
+
+    /**
+     * @var array React\ChildProcess Process table to keep track of all action processess that are running.
+     */
     protected $runningActions = [];
 
+    /**
+     * @var array Configuration for actions
+     */
     protected $actionConfig = [];
 
+    /**
+     * @var array
+     */
+    protected $inflightActionCommands = [];
+
+    /**
+     * @var array
+     */
+    protected $erroredActionCommands = [];
+
+    /**
+     * @var TimerInterface Reference to the periodic task to save state.
+     */
     protected $saveHandler;
 
     protected $saveFileName = '/tmp/php-ec-savepoint';
@@ -61,28 +95,36 @@ class Scheduler {
         $this->rules = $rules;
     }
 
-    public function register_input_process(string $cmd, ?string $wd, array $env = [])
+    public function register_input_process($id, string $cmd, ?string $wd, array $env = [])
     {
-        $this->input_processes_config[] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env];
+        $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env];
     }
 
-    public function setup_input_process(Process $process) {
+    public function setup_input_process(Process $process, $id) {
         $process->start($this->loop);
-        /** @todo Don't hardcode stdout decoder */
-        $process_decoded_stdout = new \Clue\React\NDJson\Decoder($process->stdout, true);
+        $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
 
-        $process_decoded_stdout->on('data', function($data) {
-            $event = new Event($data);
-            /**
-             * Pass the event to the engine to be handled
-             */
-            $this->engine->handle($event);
+        $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
+            switch ( $rpc->getMethod() ) {
+                case 'handle':
+                    $event = new Event($rpc->getParams());
+                    /**
+                     * Pass the event to the engine to be handled
+                     */
+                    $this->engine->handle($event);
 
-            /**
-             * If we are running in real time then schedule a timer for the next timeout
-             */
-            if ($this->engine->isRealtime()) {
-                $this->scheduleNextTimeout();
+                    /**
+                     * If we are running in real time then schedule a timer for the next timeout
+                     */
+                    if ($this->engine->isRealtime()) {
+                        $this->scheduleNextTimeout();
+                    }
+                    break;
+                case 'checkpoint':
+                    $this->input_processes_checkpoints[$id] = $rpc->getParams();
+                    break;
+                default:
+                    throw new \RuntimeException("Unknown json rpc command {$rpc->getMethod()} from input process");
             }
         });
 
@@ -118,13 +160,31 @@ class Scheduler {
             $process->start($this->loop);
 
             $process->stderr->on('data', function ($data) {
-                //@TODO handle any errors
+                //@TODO handle any error messages
                 fwrite(STDERR, $data . "\n");
             });
 
-            $process->stdout->on('data', function ($data) {
-                //@TODO handle any acks
-                //echo $data . "\n";
+            $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
+
+            $process_decoded_stdout->on('data', function (JsonRpcResponse $response) {
+                if ($response->isSuccess())
+                {
+                    /** Once the action has been processed sucessfully we can discard of our copy of it */
+                    unset($this->inflightActionCommands[$response->getId()]);
+                }
+                else
+                {
+                    /** Transfer the action from the running queue to the errored queue
+                     * We need to watch this queue and handle any run-away errors (eg a database been unavailable to ingest events)
+                     */
+                    $error = ['error' => $response->getError(),
+                        'action' => $this->inflightActionCommands[$response->getId()],
+                        ];
+                    $this->erroredActionCommands[] = $error;
+                    unset($this->inflightActionCommands[$response->getId()]);
+
+                    fwrite(STDERR, $response->getError()->getMessage() . PHP_EOL);
+                }
             });
 
             $process->on('exit', function ($code, $term) use ($actionName) {
@@ -162,7 +222,10 @@ class Scheduler {
                 $engine = $this->engine;
                 $filename = tempnam("/tmp", ".php-ce.state.tmp");
                 $file = $filesystem->file($filename);
-                $file->putContents(json_encode($this->engine->getState(), JSON_PRETTY_PRINT))
+                $state = ['engine' => $this->engine->getState(),
+                    'scheduler' => $this->getState(),
+                ];
+                $file->putContents(json_encode($state, JSON_PRETTY_PRINT))
                     ->then(function () use ($file, $engine) {
                         $file->rename($this->saveFileName )
                             ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
@@ -225,10 +288,10 @@ class Scheduler {
         $this->engine = new CorrelationEngine($this->rules);
 
         /** Start input processes */
-        foreach ($this->input_processes_config as $config)
+        foreach ($this->input_processes_config as $id => $config)
         {
             $process = new Process($config['cmd'], $config['wd'], $config['env']);
-            $this->setup_input_process($process);
+            $this->setup_input_process($process, $id);
             $this->input_processes[] = $process;
         }
 
@@ -245,12 +308,18 @@ class Scheduler {
             if (isset($this->actionConfig[$actionName]))
             {
                 $process = $this->start_action($actionName);
-                /** Once the process is up and running we then write out our data via it's STDIN, encoded as JSON */
-                $process->stdin->write(json_encode($action->getVars()) . "\n");
+                /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
+                $rpc_request = new JsonRpcRequest();
+                $rpc_request->setMethod('run');
+                $rpc_request->setParams($action->getVars());
+                $id = mt_rand();
+                $rpc_request->setId($id);
+                $this->inflightActionCommands[$rpc_request->getId()] = $action;
+                $process->stdin->write(json_encode($rpc_request) . "\n");
             }
             else
             {
-                echo "Unknown Action: " . json_encode(($action)) . "\n";
+                echo "Unknown Action: " . json_encode($action) . PHP_EOL;
             }
         });
 
@@ -284,5 +353,13 @@ class Scheduler {
         $this->loop->stop();
 
         /** @TODO Save final state */
+    }
+
+    protected function getState()
+    {
+        $state = [];
+        $state['input']['checkpoints'] = $this->input_processes_checkpoints;
+        $state['actions'] = ['inflight' => $this->inflightActionCommands, 'errored' => $this->erroredActionCommands];
+        return $state;
     }
 }
