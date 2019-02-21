@@ -107,7 +107,7 @@ class Scheduler {
         $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
             switch ( $rpc->getMethod() ) {
                 case 'handle':
-                    $event = new Event($rpc->getParams());
+                    $event = new Event($rpc->getParam('event'));
                     /**
                      * Pass the event to the engine to be handled
                      */
