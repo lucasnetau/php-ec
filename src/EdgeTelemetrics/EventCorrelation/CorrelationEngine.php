@@ -84,10 +84,13 @@ class CorrelationEngine implements EventEmitterInterface {
             }
         }
 
-        /**  @TODO We should trigger a timout check prior to processing event when we are in non-live mode,
-         *   @TODO This is to ensure that any required timeouts prior to this event are handled first before moving ahead in the timestream
-         *   @TODO Timeout should be current event minus 1 second, after processing the event we re-run the check with the event timeout.
-        */
+        /** When we are parsing historical event stream data manually trigger any timeouts up until 1 second before the current event
+         * Any timeouts at the current time will be triggered after handling the current incoming event
+         */
+        if (false === $this->eventstream_live)
+        {
+            $this->checkTimeouts($event->datetime->sub('-1 second'));
+        }
 
         /**
          * Check existing state machines first to see if the event can be handled
