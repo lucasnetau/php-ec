@@ -226,7 +226,7 @@ class Scheduler {
                     'scheduler' => $this->getState(),
                 ];
                 $file->putContents(json_encode($state, JSON_PRETTY_PRINT))
-                    ->then(function () use ($file, $engine) {
+                    ->then(function () use ($file) {
                         $file->rename($this->saveFileName )
                             ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
                                 $this->engine->clearDirtyFlag();
