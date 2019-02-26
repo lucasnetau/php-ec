@@ -89,7 +89,7 @@ class CorrelationEngine implements EventEmitterInterface {
          */
         if (false === $this->eventstream_live)
         {
-            $this->checkTimeouts($event->datetime->sub('-1 second'));
+            $this->checkTimeouts($event->datetime->modify('-1 second'));
         }
 
         /**
