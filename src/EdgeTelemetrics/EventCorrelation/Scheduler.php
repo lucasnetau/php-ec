@@ -12,6 +12,7 @@ use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 
 use function array_key_first;
 use function fwrite;
+use React\Filesystem\Filesystem;
 use function tempnam;
 use function json_encode;
 use function json_decode;
@@ -25,6 +26,8 @@ use const SIGTERM;
 use const SIGHUP;
 
 class Scheduler {
+    const CHECKPOINT_VARNAME = 'PHPEC_CHECKPOINT';
+
     /**
      * @var LoopInterface
      */
@@ -213,32 +216,46 @@ class Scheduler {
     {
         /**
          * Setup a time to save the state of the correlation engine every every one second
-         * @var $saveHandler
          */
-        $filesystem = \React\Filesystem\Filesystem::create($this->loop);
+        $filesystem = Filesystem::create($this->loop);
         $this->saveHandler = $this->loop->addPeriodicTimer(1, function() use ($filesystem) {
             if ($this->engine->isDirty())
             {
-                $engine = $this->engine;
-                $filename = tempnam("/tmp", ".php-ce.state.tmp");
-                $file = $filesystem->file($filename);
-                $state = ['engine' => $this->engine->getState(),
-                    'scheduler' => $this->getState(),
-                ];
-                $file->putContents(json_encode($state, JSON_PRETTY_PRINT))
-                    ->then(function () use ($file) {
-                        $file->rename($this->saveFileName )
-                            ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
-                                $this->engine->clearDirtyFlag();
-                                echo "State Saved\n";
-                            }, function (\Exception $e) {
-                                throw $e;
-                            });
+                $this->saveStateAsync($filesystem);
+            }
+        });
+    }
+
+    public function buildState()
+    {
+        return ['engine' => $this->engine->getState(),
+            'scheduler' => $this->getState(),
+        ];
+    }
+
+    public function saveStateAsync(Filesystem $filesystem)
+    {
+        $filename = tempnam("/tmp", ".php-ce.state.tmp");
+        $file = $filesystem->file($filename);
+        $file->putContents(json_encode($this->buildState(), JSON_PRETTY_PRINT))
+            ->then(function () use ($file) {
+                $file->rename($this->saveFileName)
+                    ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
+                        $this->engine->clearDirtyFlag();
+                        echo "State Saved\n";
                     }, function (\Exception $e) {
                         throw $e;
                     });
-            }
-        });
+            }, function (\Exception $e) {
+                throw $e;
+            });
+    }
+
+    public function saveStateSync()
+    {
+        $filename = tempnam("/tmp", ".php-ce.state.tmp");
+        file_put_contents($filename, json_encode($this->buildState(), JSON_PRETTY_PRINT));
+        rename($filename, $this->saveFileName);
     }
 
     /**
@@ -284,24 +301,35 @@ class Scheduler {
     {
         $this->loop = \React\EventLoop\Factory::create();
 
+        /** Load State from save file */
+        $savedState = $this->loadStateFromFile();
+        $this->setState($savedState['scheduler']);
+
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
+        $this->engine->setState($savedState['engine']);
 
         /** Start input processes */
         foreach ($this->input_processes_config as $id => $config)
         {
-            $process = new Process($config['cmd'], $config['wd'], $config['env']);
+            $env = $config['env'];
+            /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
+            if (isset($this->input_processes_checkpoints[$id]))
+            {
+                $env = array_merge([self::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
+            }
+            $process = new Process($config['cmd'], $config['wd'], $env);
             $this->setup_input_process($process, $id);
             $this->input_processes[] = $process;
         }
 
         /** When new events are emitted from the correlation engine we persist them (hopefully) by sending them through an action */
-        if ($this->newEventAction) {
-            $this->engine->on('event', function($event) {
-                $action = new Action($this->newEventAction, json_decode(json_encode($event),true));
+        $this->engine->on('event', function(IEvent $event) {
+            if (null !== $this->newEventAction) {
+                $action = new Action($this->newEventAction, json_decode(json_encode($event), true));
                 $this->engine->emit('action', [$action]);
-            });
-        };
+            };
+        });
 
         $this->engine->on('action', function(Action $action) {
             $actionName = $action->getCmd();
@@ -342,8 +370,6 @@ class Scheduler {
             echo "Received SIGHUP but ignoring\n";
         });
 
-        /** @TODO Load State from save file */
-
         /** GO! */
         $this->loop->run();
     }
@@ -351,8 +377,12 @@ class Scheduler {
     public function stop()
     {
         $this->loop->stop();
+        $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
+    }
 
-        /** @TODO Save final state */
+    public function loadStateFromFile()
+    {
+        return json_decode(file_get_contents($this->saveFileName), true);
     }
 
     protected function getState()
@@ -361,5 +391,12 @@ class Scheduler {
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
         $state['actions'] = ['inflight' => $this->inflightActionCommands, 'errored' => $this->erroredActionCommands];
         return $state;
+    }
+
+    public function setState(array $state)
+    {
+        $this->input_processes_checkpoints = $state['input']['checkpoints'];
+        /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
+        $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
     }
 }

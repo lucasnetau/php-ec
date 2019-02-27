@@ -2,6 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator;
@@ -220,22 +221,23 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * Construct a new matcher EventProcessor and attach handlers for any events
-     * @param $className
-     * @return IEventGenerator|IEventMatcher
+     * @param string $className
+     * @return IEventMatcher
      * @throws \RuntimeException;
      */
-    public function constructMatcher($className)
+    public function constructMatcher(string $className)
     {
         if (is_a($className, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher', true))
         {
-            /** @var IEventMatcher|IActionGenerator $matcher */
+            /** @var IEventMatcher $matcher */
             $matcher = new $className();
             if (is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator') ||
                 is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator')
             ) {
-                /** @var IEventGenerator $matcher */
+                /** @var IEventGenerator|IActionGenerator $matcher */
                 $matcher->on('data', [$this, 'handleEmit']);
             }
+            /** @var IEventMatcher $matcher */
             return $matcher;
         }
         else
@@ -267,8 +269,8 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * Keep note that the state machine $matcher is waiting for events $events
-     * @param $matcher
-     * @param $events
+     * @param IEventMatcher $matcher
+     * @param array $events
      */
     public function addWatchForEvents(IEventMatcher $matcher, array $events)
     {
@@ -280,8 +282,8 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * Remove record that $matcher is waiting for certain events
-     * @param $matcher
-     * @param $events
+     * @param IEventMatcher $matcher
+     * @param array $events
      */
     public function removeWatchForEvents(IEventMatcher $matcher, array $events)
     {
@@ -328,7 +330,7 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * Get the current timeouts for all running state machines. Sort the list prior to returning
-     * @return array<\DateTimeImmutable>
+     * @return array
      */
     public function getTimeouts()
     {
@@ -436,7 +438,33 @@ class CorrelationEngine implements EventEmitterInterface {
 
     public function setState($state)
     {
+        $this->statistics = $state['statistics'];
+        $events = [];
+        foreach($state['events'] as $hash => $eventData)
+        {
+            $event = unserialize($eventData);
+            $events[$hash] = $event;
+        }
+        foreach($state['matchers'] as $matcherState)
+        {
+            /** @var AEventProcessor $matcher */
+            $matcher = unserialize($matcherState);
+            $matcher->resolveEvents($events);
+            $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
+            $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
+        }
 
+        if (true === $state['eventstream_live'])
+        {
+            $this->setEventStreamLive();
+        }
+        else
+        {
+            foreach($this->eventProcessors as $matcher )
+            {
+                $this->addTimeout($matcher); //No need to call updateTimeout() first, it is done by the unserialisation
+            }
+        }
     }
 
     /**
