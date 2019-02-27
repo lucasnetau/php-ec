@@ -13,6 +13,7 @@ use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 use function array_key_first;
 use function fwrite;
 use React\Filesystem\Filesystem;
+use React\Filesystem\FilesystemInterface;
 use function tempnam;
 use function json_encode;
 use function json_decode;
@@ -233,7 +234,7 @@ class Scheduler {
         ];
     }
 
-    public function saveStateAsync(Filesystem $filesystem)
+    public function saveStateAsync(FilesystemInterface $filesystem)
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         $file = $filesystem->file($filename);
