@@ -12,10 +12,19 @@ use function json_decode;
 class Event implements IEvent {
     protected $id;
 
+    /**
+     * @var string
+     */
     protected $event;
 
+    /**
+     * @var \DateTimeImmutable
+     */
     protected $datetime;
 
+    /**
+     * @var \DateTimeImmutable
+     */
     protected $receivedTime;
 
     /**
@@ -61,9 +70,9 @@ class Event implements IEvent {
     }
 
     /**
-     * @param \DateTimeInterface $time
+     * @param \DateTimeImmutable $time
      */
-    public function setReceivedTime(\DateTimeInterface $time)
+    public function setReceivedTime(\DateTimeImmutable $time)
     {
         $this->receivedTime = $time;
     }
