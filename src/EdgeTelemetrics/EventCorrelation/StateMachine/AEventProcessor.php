@@ -243,7 +243,10 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         }
         else
         {
-            $this->timeout = $this->lastSeenEventDateTime()->add(new \DateInterval(static::TIMEOUT));
+            $lastSeen = $this->lastSeenEventDateTime();
+            if (null !== $lastSeen) {
+                $this->timeout = $lastSeen->add(new \DateInterval(static::TIMEOUT));
+            }
         }
     }
 
