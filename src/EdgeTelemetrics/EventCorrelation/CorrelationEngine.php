@@ -19,6 +19,8 @@ use function count;
 use function is_a;
 use function array_multisort;
 use function array_map;
+use function array_sum;
+use function array_slice;
 use function serialize;
 
 class CorrelationEngine implements EventEmitterInterface {
@@ -41,6 +43,15 @@ class CorrelationEngine implements EventEmitterInterface {
 
     protected $timeoutsSorted = false;
 
+    protected $epsCounter;
+
+    /**
+     * Counter length (in seconds) for recording events per second metrics.
+     */
+    const EPS_COUNTER_LENGTH = 3600;
+
+    protected $lastEventReal;
+
     /** @var array  */
     protected $statistics = [];
 
@@ -55,6 +66,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 $this->initialEventLookup[$eventname][] = $matcher;
             }
         }
+        $this->epsCounter = array_fill(0,self::EPS_COUNTER_LENGTH, 0);
     }
 
     public function isFlagSet(int $check, int $flag)
@@ -217,6 +229,9 @@ class CorrelationEngine implements EventEmitterInterface {
 
         /** Flag as dirty **/
         $this->dirty = true;
+
+        /** Increment event per second counters */
+        $this->incrEps();
     }
 
     /**
@@ -231,18 +246,23 @@ class CorrelationEngine implements EventEmitterInterface {
         {
             /** @var IEventMatcher $matcher */
             $matcher = new $className();
-            if (is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator') ||
-                is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator')
-            ) {
-                /** @var IEventGenerator|IActionGenerator $matcher */
-                $matcher->on('data', [$this, 'handleEmit']);
-            }
+            $this->attachListeners($matcher);
             /** @var IEventMatcher $matcher */
             return $matcher;
         }
         else
         {
             throw new \RuntimeException("{$className} does not implement EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher");
+        }
+    }
+
+    public function attachListeners(IEventMatcher $matcher)
+    {
+        if (is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator') ||
+            is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator')
+        ) {
+            /** @var IEventGenerator|IActionGenerator $matcher */
+            $matcher->on('data', [$this, 'handleEmit']);
         }
     }
 
@@ -336,7 +356,6 @@ class CorrelationEngine implements EventEmitterInterface {
     {
         //Sort by timeout
         if (false === $this->timeoutsSorted) {
-            echo "Sorted timeouts\n";
             array_multisort(array_map(function ($element) {
                 return $element['timeout']->format('Ydm His');
             }, $this->timeouts), SORT_DESC, $this->timeouts);
@@ -409,6 +428,7 @@ class CorrelationEngine implements EventEmitterInterface {
         $state['matchers'] = [];
         $state['events'] = [];
         $state['statistics'] = $this->statistics;
+        $state['load'] = $this->calcLoad();
         foreach($this->waitingForNextEvent as $matchers)
         {
             foreach($matchers as $matcher)
@@ -442,14 +462,27 @@ class CorrelationEngine implements EventEmitterInterface {
         $events = [];
         foreach($state['events'] as $hash => $eventData)
         {
+            /**
+             * First we unserialize all the events. We construct a table using the saved  object hashes instead of the new ones
+             * to allow the saved state machines to identify their events.
+             */
             $event = unserialize($eventData);
             $events[$hash] = $event;
         }
         foreach($state['matchers'] as $matcherState)
         {
+            /**
+             * Reconstruct each state machine.
+             * 1. Unserialise to an object
+             * 2. Pass in all events to the state machine for it to resolve it's recorded events
+             * 3. Attach listeners to the state machine for events
+             * 4. Add state machine to our records
+             * 5. Let the engine know what events to forward to the state machine.
+             */
             /** @var AEventProcessor $matcher */
             $matcher = unserialize($matcherState);
             $matcher->resolveEvents($events);
+            $this->attachListeners($matcher);
             $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
             $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
         }
@@ -494,5 +527,78 @@ class CorrelationEngine implements EventEmitterInterface {
         if (!isset($this->statistics[$group])) { $this->statistics[$group] = []; }
         if (!isset($this->statistics[$group][$name])) { $this->statistics[$group][$name] = 0; }
         $this->statistics[$group][$name] += $incr;
+    }
+
+    /**
+     * Increment the event per second counters
+     */
+    public function incrEps()
+    {
+        $time = time();
+        $index = $time % self::EPS_COUNTER_LENGTH;
+
+        $this->flushOldEps();
+        $this->epsCounter[$index]++;
+
+        $this->lastEventReal = $time;
+    }
+
+    public function flushOldEps()
+    {
+        $time = time();
+        $index = $time % self::EPS_COUNTER_LENGTH;
+
+        /** Don't flush if we are tracking the current second */
+        if (null === $this->lastEventReal || $time == $this->lastEventReal)
+        {
+            return;
+        }
+
+        /** Check if we have not processed an event for the max measurement period and reset all counters */
+        if (($time - $this->lastEventReal) >= self::EPS_COUNTER_LENGTH) {
+            array_fill(0,self::EPS_COUNTER_LENGTH, 0);
+        }
+        else
+        {
+            /** We are a new time period */
+            $lastIndex = $this->lastEventReal % self::EPS_COUNTER_LENGTH;
+            if ($index >= $lastIndex)
+            {
+                for($i = $lastIndex+1; $i <= $index; $i++)
+                {
+                    $this->epsCounter[$i] = 0;
+                }
+            }
+            else
+            {
+                for($i = 0; $i <= $index; $i++)
+                {
+                    $this->epsCounter[$i] = 0;
+                }
+                for($i = $lastIndex+1; $i < self::EPS_COUNTER_LENGTH; $i++)
+                {
+                    $this->epsCounter[$i] = 0;
+                }
+            }
+        }
+    }
+
+    public function calcLoad()
+    {
+        $time = time();
+        $index = $time % self::EPS_COUNTER_LENGTH; /* seconds in an hour. Calculating over an hour */
+
+        $this->flushOldEps();
+
+        /** @var array $shiftedArray Shift the counter so that the current time modulus is the last item in the array */
+        $shiftedArray = array_merge(array_slice($this->epsCounter, $index+1), array_slice($this->epsCounter, 0, $index+1));
+
+        return [
+            'lastEvent' => $this->lastEventReal,
+            'hour' => array_sum($this->epsCounter),
+            'fifteen' => array_sum(array_slice($shiftedArray, -900)),
+            'minute' => array_sum(array_slice($shiftedArray, -60)),
+            'counter' => implode(",", $shiftedArray),
+        ];
     }
 }
