@@ -287,11 +287,17 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     public function jsonSerialize()
     {
         $return = [];
-        $return['events'] = array_map(function($event){ return spl_object_hash($event); } , $this->consumedEvents);
+        $return['events'] = array_map(function ($event) {
+            return spl_object_hash($event);
+        }, $this->consumedEvents);
 
         $return['actionFired'] = $this->actionFired;
         $return['isTimedOut'] = $this->isTimedOut;
         $return['context'] = $this->context;
+        if ($this->timeout instanceof \DateTimeInterface)
+        {
+            $return['timeout'] = $this->timeout->format('Y-m-d H:i:s');
+        }
 
         if (method_exists($this, 'serializeMetrics'))
         {
