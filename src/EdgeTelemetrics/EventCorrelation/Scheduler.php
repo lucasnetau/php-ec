@@ -368,7 +368,9 @@ class Scheduler {
         $this->loop->addSignal(SIGTERM, array($this, 'stop'));
         // logout
         $this->loop->addSignal(SIGHUP, function() {
-            echo "Received SIGHUP but ignoring\n";
+            /** If we receive a HUP save the current running state. Don't exit */
+            $this->saveStateSync();
+            gc_collect_cycles();
         });
 
         /** GO! */
