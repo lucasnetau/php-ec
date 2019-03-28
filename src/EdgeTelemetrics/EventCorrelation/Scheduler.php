@@ -310,6 +310,9 @@ class Scheduler {
         $this->engine = new CorrelationEngine($this->rules);
         $this->engine->setState($savedState['engine']);
 
+        /** Release the loaded saved state array */
+        unset($savedState);
+
         /** Start input processes */
         foreach ($this->input_processes_config as $id => $config)
         {
