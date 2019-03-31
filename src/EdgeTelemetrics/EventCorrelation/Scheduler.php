@@ -2,6 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use React\EventLoop\Factory;
 use React\EventLoop\LoopInterface;
 use React\ChildProcess\Process;
 use React\EventLoop\TimerInterface;
@@ -298,10 +299,8 @@ class Scheduler {
         }
     }
 
-    public function run()
+    protected function restoreState()
     {
-        $this->loop = \React\EventLoop\Factory::create();
-
         /** Load State from save file */
         $savedState = $this->loadStateFromFile();
         $this->setState($savedState['scheduler']);
@@ -309,9 +308,18 @@ class Scheduler {
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
         $this->engine->setState($savedState['engine']);
+    }
 
-        /** Release the loaded saved state array */
-        unset($savedState);
+    public function run()
+    {
+        $this->loop = Factory::create();
+
+        /** Restore the state of the scheduler and engine */
+        $this->restoreState();
+
+        /** Force a run of the PHP GC and release caches. */
+        gc_collect_cycles();
+        gc_mem_caches();
 
         /** Start input processes */
         foreach ($this->input_processes_config as $id => $config)
@@ -371,9 +379,12 @@ class Scheduler {
         $this->loop->addSignal(SIGTERM, array($this, 'stop'));
         // logout
         $this->loop->addSignal(SIGHUP, function() {
-            /** If we receive a HUP save the current running state. Don't exit */
-            $this->saveStateSync();
+            /** If we receive a HUP save the current running state. Don't exit
+             * Force a run of the PHP GC and release caches.
+             */
             gc_collect_cycles();
+            gc_mem_caches();
+            $this->saveStateSync();
         });
 
         /** GO! */
@@ -403,6 +414,7 @@ class Scheduler {
     {
         $this->input_processes_checkpoints = $state['input']['checkpoints'];
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
-        $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
+        /** @TODO, this could be a big array, we need to handle that in a memory sensitive way */
+       $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
     }
 }
