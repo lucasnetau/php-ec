@@ -405,8 +405,10 @@ class CorrelationEngine implements EventEmitterInterface {
                 $matcher->fire();
                 if ($matcher->isTimedOut())
                 {
+                    /** Remove all references if the matcher is complete */
                     $this->removeWatchForEvents($matcher, $matcher->nextAcceptedEvents());
                     $this->removeTimeout($matcher);
+                    unset($this->eventProcessors[spl_object_hash($matcher)]);
                     unset($matcher);
                 }
                 $this->dirty = true;
