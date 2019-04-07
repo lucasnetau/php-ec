@@ -411,6 +411,11 @@ class CorrelationEngine implements EventEmitterInterface {
                     unset($this->eventProcessors[spl_object_hash($matcher)]);
                     unset($matcher);
                 }
+                else
+                {
+                    /** Update the timeout for this matcher after it has alarmed but has not timed out */
+                    $this->addTimeout($matcher);
+                }
                 $this->dirty = true;
             }
             else
