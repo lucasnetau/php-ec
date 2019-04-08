@@ -358,7 +358,7 @@ class CorrelationEngine implements EventEmitterInterface {
         if (false === $this->timeoutsSorted) {
             array_multisort(array_map(function ($element) {
                 return $element['timeout']->format('Ydm His');
-            }, $this->timeouts), SORT_DESC, $this->timeouts);
+            }, $this->timeouts), SORT_ASC, $this->timeouts);
             $this->timeoutsSorted = true;
         }
         return $this->timeouts;
@@ -390,9 +390,11 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * Check if any timeouts are prior to the $time passed and if so trigger the timeout logic for the respective matcher
      * @param \DateTimeInterface $time
+     * @return int Returns the number of alarms triggered by timeouts
      */
-    public function checkTimeouts(\DateTimeInterface $time)
+    public function checkTimeouts(\DateTimeInterface $time): int
     {
+        $triggered = 0;
         foreach ( $this->getTimeouts() as $timeout)
         {
             if ($time > $timeout['timeout'])
@@ -403,6 +405,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 $matcher = $timeout['matcher'];
                 $matcher->alarm();
                 $matcher->fire();
+                $triggered++;
                 if ($matcher->isTimedOut())
                 {
                     /** Remove all references if the matcher is complete */
@@ -423,9 +426,10 @@ class CorrelationEngine implements EventEmitterInterface {
                 /**
                  * Timeouts are sorted so if current event is before timeout then return early
                  */
-                return;
+                break;
             }
         }
+        return $triggered;
     }
 
     public function getState() : array
