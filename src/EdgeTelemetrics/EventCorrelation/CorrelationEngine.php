@@ -97,12 +97,12 @@ class CorrelationEngine implements EventEmitterInterface {
             }
         }
 
-        /** When we are parsing historical event stream data manually trigger any timeouts up until 1 second before the current event
+        /** When we are parsing historical event stream data manually trigger any timeouts up till the current event (CheckTimeouts triggers event prior to the time passed in)
          * Any timeouts at the current time will be triggered after handling the current incoming event
          */
         if (false === $this->eventstream_live)
         {
-            $this->checkTimeouts($event->datetime->modify('-1 second'));
+            $this->checkTimeouts($event->datetime);
         }
 
         /**
