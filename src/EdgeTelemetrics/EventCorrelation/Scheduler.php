@@ -10,11 +10,11 @@ use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
 use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
+use React\Filesystem\Filesystem;
+use React\Filesystem\FilesystemInterface;
 
 use function array_key_first;
 use function fwrite;
-use React\Filesystem\Filesystem;
-use React\Filesystem\FilesystemInterface;
 use function tempnam;
 use function json_encode;
 use function json_decode;
@@ -171,20 +171,18 @@ class Scheduler {
 
             $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
 
+            /** Handler for the Json RPC response */
             $process_decoded_stdout->on('data', function (JsonRpcResponse $response) {
-                if ($response->isSuccess())
-                {
-                    /** Once the action has been processed sucessfully we can discard of our copy of it */
+                if ($response->isSuccess()) {
+                    /** Once the action has been processed successfully we can discard of our copy of it */
                     unset($this->inflightActionCommands[$response->getId()]);
-                }
-                else
-                {
+                } else {
                     /** Transfer the action from the running queue to the errored queue
                      * We need to watch this queue and handle any run-away errors (eg a database been unavailable to ingest events)
                      */
                     $error = ['error' => $response->getError(),
                         'action' => $this->inflightActionCommands[$response->getId()],
-                        ];
+                    ];
                     $this->erroredActionCommands[] = $error;
                     unset($this->inflightActionCommands[$response->getId()]);
 
