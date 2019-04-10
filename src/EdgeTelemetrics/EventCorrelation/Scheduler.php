@@ -311,6 +311,7 @@ class Scheduler {
     public function run()
     {
         $this->loop = Factory::create();
+        fwrite(STDERR, "Using event loop implementation: " . get_class($this->loop) . PHP_EOL);
 
         /** Restore the state of the scheduler and engine */
         $this->restoreState();
