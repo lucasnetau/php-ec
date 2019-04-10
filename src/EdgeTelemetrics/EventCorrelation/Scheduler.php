@@ -92,6 +92,11 @@ class Scheduler {
 
     protected $saveFileName = '/tmp/php-ec-savepoint';
 
+    /**
+     * @var bool Flag if the scheduler has information that needs to be flushed to the save file.
+     */
+    protected $dirty;
+
     /** @var string|null */
     protected $newEventAction = null;
 
@@ -127,6 +132,7 @@ class Scheduler {
                     break;
                 case 'checkpoint':
                     $this->input_processes_checkpoints[$id] = $rpc->getParams();
+                    $this->dirty = true;
                     break;
                 default:
                     throw new \RuntimeException("Unknown json rpc command {$rpc->getMethod()} from input process");
@@ -198,9 +204,11 @@ class Scheduler {
                     fwrite(STDERR, "Action $actionName exited on signal: $term" . PHP_EOL);
                 }
                 unset($this->runningActions[$actionName]);
+                $this->dirty = true;
             });
 
             $this->runningActions[$actionName] = $process;
+            $this->dirty = true;
             return $process;
         }
 
@@ -219,8 +227,14 @@ class Scheduler {
          */
         $filesystem = Filesystem::create($this->loop);
         $this->saveHandler = $this->loop->addPeriodicTimer(1, function() use ($filesystem) {
-            if ($this->engine->isDirty())
+            if ($this->engine->isDirty() || $this->dirty)
             {
+                /** Clear the dirty flags before calling the async save process.
+                 * This ensures that changes that occur between now and the save file
+                 * being written are scheduled to be flushed on the next cycle
+                 */
+                $this->engine->clearDirtyFlag();
+                $this->dirty = false;
                 $this->saveStateAsync($filesystem);
             }
         });
@@ -241,9 +255,9 @@ class Scheduler {
             ->then(function () use ($file) {
                 $file->rename($this->saveFileName)
                     ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
-                        $this->engine->clearDirtyFlag();
                         echo "State Saved\n";
                     }, function (\Exception $e) {
+                        $this->dirty = true; /** We didn't save state correctly so we mark the scheduler as dirty to ensure it is attempted again */
                         throw $e;
                     });
             }, function (\Exception $e) {
@@ -354,6 +368,7 @@ class Scheduler {
                 $id = mt_rand();
                 $rpc_request->setId($id);
                 $this->inflightActionCommands[$rpc_request->getId()] = $action;
+                $this->dirty = true;
                 $process->stdin->write(json_encode($rpc_request) . "\n");
             }
             else
