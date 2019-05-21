@@ -315,11 +315,15 @@ class Scheduler {
     {
         /** Load State from save file */
         $savedState = $this->loadStateFromFile();
-        $this->setState($savedState['scheduler']);
+        if (false !== $savedState) {
+            $this->setState($savedState['scheduler']);
+        }
 
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
-        $this->engine->setState($savedState['engine']);
+        if (false !== $savedState) {
+            $this->engine->setState($savedState['engine']);
+        }
     }
 
     public function run()
@@ -413,7 +417,12 @@ class Scheduler {
 
     public function loadStateFromFile()
     {
-        return json_decode(file_get_contents($this->saveFileName), true);
+        if (file_exists($this->saveFileName))
+        {
+            return json_decode(file_get_contents($this->saveFileName), true);
+        }
+        return false;
+
     }
 
     protected function getState()
