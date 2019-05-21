@@ -324,6 +324,29 @@ class Scheduler {
         if (false !== $savedState) {
             $this->engine->setState($savedState['engine']);
         }
+
+        /** Inject some synthetic events in to the engine to flag that the engine is starting for the first time or restoring
+         * Rules can handle these events for initialisation purposes (handy for setting up rules that detect when an event is missing)
+         */
+        $this->loop->futureTick(function() use ($savedState) {
+
+            if (false === $savedState) {
+                $event = new Event(['event' => 'PHP-EC:Engine:Start']);
+            } else {
+                $event = new Event(['event' => 'PHP-EC:Engine:Restored']);
+            }
+            /**
+             * Pass the event to the engine to be handled
+             */
+            $this->engine->handle($event);
+
+            /**
+             * If we are running in real time then schedule a timer for the next timeout
+             */
+            if ($this->engine->isRealtime()) {
+                $this->scheduleNextTimeout();
+            }
+        });
     }
 
     public function run()
@@ -334,7 +357,7 @@ class Scheduler {
         /** Restore the state of the scheduler and engine */
         $this->restoreState();
 
-        /** Force a run of the PHP GC and release caches. */
+        /** Force a run of the PHP GC and release caches. This helps clearing out memory consumed by restoring state from a large json file */
         gc_collect_cycles();
         gc_mem_caches();
 
