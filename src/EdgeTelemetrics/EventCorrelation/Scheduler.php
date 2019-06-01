@@ -329,7 +329,6 @@ class Scheduler {
          * Rules can handle these events for initialisation purposes (handy for setting up rules that detect when an event is missing)
          */
         $this->loop->futureTick(function() use ($savedState) {
-
             if (false === $savedState) {
                 $event = new Event(['event' => 'PHP-EC:Engine:Start']);
             } else {
@@ -461,6 +460,14 @@ class Scheduler {
         $this->input_processes_checkpoints = $state['input']['checkpoints'];
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
         /** @TODO, this could be a big array, we need to handle that in a memory sensitive way */
+        if (count($state['actions']['errored']) > 0)
+        {
+            error_log("Failed actions detected from previous execution");
+            if (count($state['actions']['errored']) > 50)
+            {
+                error_log("Large number of failed actions. Memory consumption for state table may be large.");
+            }
+        }
        $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
     }
 }
