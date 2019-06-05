@@ -99,6 +99,8 @@ class CorrelationEngine implements EventEmitterInterface {
 
         /** When we are parsing historical event stream data manually trigger any timeouts up till the current event (CheckTimeouts triggers event prior to the time passed in)
          * Any timeouts at the current time will be triggered after handling the current incoming event
+         * @TODO This might not be the best place to call this where multiple stream interlace with different timestamps.
+         * @TODO This should be moved to checking if a matcher would handle the event then to call it's timeout check first and other items.
          */
         if (false === $this->eventstream_live)
         {
