@@ -56,7 +56,7 @@ class Scheduler {
     protected $rules = [];
 
     /**
-     * @var array Configuration for input processes
+     * @var array Process Configuration for input processes
      */
     protected $input_processes_config = [];
 
@@ -96,6 +96,11 @@ class Scheduler {
      * @var bool Flag if the scheduler has information that needs to be flushed to the save file.
      */
     protected $dirty;
+
+    /**
+     * Flag for whether we keep failed actions when loading or drop them.
+     */
+    const PRESERVE_FAILED_EVENTS_ONLOAD = false;
 
     /** @var string|null */
     protected $newEventAction = null;
@@ -194,6 +199,12 @@ class Scheduler {
 
                     fwrite(STDERR, $response->getError()->getMessage() . PHP_EOL);
                 }
+                /** Release memory used by the inflight action table */
+                if (count($this->inflightActionCommands) === 0)
+                {
+                    $this->inflightActionCommands = [];
+                }
+                $this->dirty = true;
             });
 
             $process->on('exit', function ($code, $term) use ($actionName) {
@@ -204,6 +215,10 @@ class Scheduler {
                     fwrite(STDERR, "Action $actionName exited on signal: $term" . PHP_EOL);
                 }
                 unset($this->runningActions[$actionName]);
+                if (count($this->runningActions) === 0)
+                {
+                    $this->runningActions = [];
+                }
                 $this->dirty = true;
             });
 
@@ -251,7 +266,7 @@ class Scheduler {
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         $file = $filesystem->file($filename);
-        $file->putContents(json_encode($this->buildState(), JSON_PRETTY_PRINT))
+        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK))
             ->then(function () use ($file) {
                 $file->rename($this->saveFileName)
                     ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
@@ -268,7 +283,7 @@ class Scheduler {
     public function saveStateSync()
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
-        file_put_contents($filename, json_encode($this->buildState(), JSON_PRETTY_PRINT));
+        file_put_contents($filename, json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK));
         rename($filename, $this->saveFileName);
     }
 
@@ -317,12 +332,14 @@ class Scheduler {
         $savedState = $this->loadStateFromFile();
         if (false !== $savedState) {
             $this->setState($savedState['scheduler']);
+            unset($savedState['scheduler']);
         }
 
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
         if (false !== $savedState) {
             $this->engine->setState($savedState['engine']);
+            unset($savedState['engine']);
         }
 
         /** Inject some synthetic events in to the engine to flag that the engine is starting for the first time or restoring
@@ -407,10 +424,7 @@ class Scheduler {
         $this->setup_save_state();
 
         /** Monitor memory usage */
-        $this->loop->addPeriodicTimer(10, function() {
-            fwrite(STDERR, "Current Memory Usage: " . memory_get_usage(true)/1024/1024 . " MB" . PHP_EOL);
-            fwrite(STDERR, "Peak Memory Usage: " . memory_get_peak_usage(true)/1024/1024 . " MB" . PHP_EOL);
-        });
+        $this->loop->addPeriodicTimer(2, function() { $this->checkMemoryPressure(); });
 
         /** Gracefully shutdown */
         // ctrl+c
@@ -468,6 +482,82 @@ class Scheduler {
                 error_log("Large number of failed actions. Memory consumption for state table may be large.");
             }
         }
-       $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
+        if (true === self::PRESERVE_FAILED_EVENTS_ONLOAD) {
+            $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
+        }
+    }
+
+    protected function checkMemoryPressure()
+    {
+        static $limit = 0;
+        static $paused = false;
+        if ($limit === 0)
+        {
+            $limit = $this->calculateMemoryLimit();
+        }
+
+        $current_memory_usage = memory_get_usage();
+        $peak_memory_usage = memory_get_peak_usage(true);
+        //fwrite(STDERR, "Current Memory Usage: " . round($current_memory_usage/1024/1024) . " MB" . PHP_EOL);
+        //fwrite(STDERR, "Peak Memory Usage: " .  round($peak_memory_usage/1024/1024) . " MB" . PHP_EOL);
+        //fwrite(STDERR, "Importers currently " . ($paused ? 'Paused' : 'Running') . PHP_EOL);
+
+        if ($limit === -1)
+        {
+            return;
+        }
+        else
+        {
+            $percent_used = (int)(($current_memory_usage / $limit) * 100);
+
+            /** Try releasing memory first and recalculate percentage used */
+            if ($percent_used > 50) {
+                gc_collect_cycles();
+                gc_mem_caches();
+                $current_memory_usage = memory_get_usage();
+                $percent_used = (int)(($current_memory_usage / $limit) * 100);
+            }
+
+            if ($percent_used > 50 || count($this->inflightActionCommands) > 30000)
+            {
+                fwrite(STDERR, "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes" . PHP_EOL);
+
+                foreach($this->input_processes as $process)
+                {
+                    if ($process->isRunning()) {
+                        $process->terminate(SIGSTOP);
+                        fwrite(STDERR, "Stopped input process " . $process->getCommand() . PHP_EOL);
+                    }
+                }
+                $paused = true;
+            }
+            else
+            {
+                if ($paused && $percent_used <= 35 && count($this->inflightActionCommands) < 500) {
+                    foreach ($this->input_processes as $process) {
+                        $process->terminate(SIGCONT);
+                        fwrite(STDERR, "Resuming input process " . $process->getCommand() . PHP_EOL);
+                    }
+                    $paused = false;
+                }
+            }
+        }
+    }
+
+    protected function calculateMemoryLimit()
+    {
+        $multiplierTable = ['K' => 1024, 'M' => 1024**2, 'G' => 1024**3];
+
+        $memory_limit_setting = ini_get('memory_limit');
+
+        preg_match("/^(-?[.0-9]+)([KMG])?$/i", $memory_limit_setting, $matches, PREG_UNMATCHED_AS_NULL);
+
+        $bytes = (int)$matches[1];
+        $multiplier = (null == $matches[2]) ? 1 : $multiplierTable[strtoupper($matches[2])];
+
+
+        $bytes = $bytes * $multiplier;
+
+        return $bytes;
     }
 }
