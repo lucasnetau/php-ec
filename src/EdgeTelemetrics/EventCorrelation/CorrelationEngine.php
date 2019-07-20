@@ -50,6 +50,7 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     const EPS_COUNTER_LENGTH = 3600;
 
+    /** @var Last event time based on wall clock time */
     protected $lastEventReal;
 
     /** @var array  */
@@ -223,7 +224,9 @@ class CorrelationEngine implements EventEmitterInterface {
             unset($matcher);
         }
 
-        /** When we are parsing historical event stream data manually trigger any timeouts **/
+        /** When we are parsing historical event stream data manually trigger any timeouts
+         @TODO Don't think this is required here, needed before event processing but not after because the timestream hasn't changed
+         **/
         if (false === $this->eventstream_live)
         {
             $this->checkTimeouts($event->datetime);

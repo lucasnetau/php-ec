@@ -102,6 +102,16 @@ class Scheduler {
      */
     const PRESERVE_FAILED_EVENTS_ONLOAD = false;
 
+    /**
+     * Event type when we start the engine up with no previous state.
+     */
+    const CONTROL_MSG_NEW_STATE = 'PHP-EC:Engine:Start';
+
+    /**
+     * Event type when we start the engine up restored state.
+     */
+    const CONTROL_MSG_RESTORED_STATE = 'PHP-EC:Engine:Restored';
+
     /** @var string|null */
     protected $newEventAction = null;
 
@@ -347,9 +357,9 @@ class Scheduler {
          */
         $this->loop->futureTick(function() use ($savedState) {
             if (false === $savedState) {
-                $event = new Event(['event' => 'PHP-EC:Engine:Start']);
+                $event = new Event(['event' => self::CONTROL_MSG_NEW_STATE]);
             } else {
-                $event = new Event(['event' => 'PHP-EC:Engine:Restored']);
+                $event = new Event(['event' => self::CONTROL_MSG_RESTORED_STATE]);
             }
             /**
              * Pass the event to the engine to be handled
