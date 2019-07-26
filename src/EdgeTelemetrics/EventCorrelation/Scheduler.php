@@ -600,7 +600,6 @@ class Scheduler {
         preg_match("/^(-?[.0-9]+)([KMG])?$/i", $memory_limit_setting, $matches, PREG_UNMATCHED_AS_NULL);
 
         $bytes = (int)$matches[1];
-        //@TODO Check if we have a memory limit of -1
         $multiplier = (null == $matches[2]) ? 1 : $multiplierTable[strtoupper($matches[2])];
 
         $bytes = $bytes * $multiplier;
