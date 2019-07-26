@@ -142,6 +142,18 @@ class Scheduler {
     /** @var string|null */
     protected $newEventAction = null;
 
+    /** @var string RPC Method expected to handle an event */
+    const INPUT_ACTION_HANDLE = 'handle';
+
+    /** @var string RPC Method to record a checkpoint for an import process */
+    const INPUT_ACTION_CHECKPOINT = 'checkpoint';
+
+    /** @var array Accepted input RPC methods */
+    const INPUT_ACTIONS = [ self::INPUT_ACTION_HANDLE, self::INPUT_ACTION_CHECKPOINT ];
+
+    /** @var string RPC method name to get an action handler to run a request */
+    const ACTION_RUN_METHOD = 'run';
+
     public function __construct(array $rules)
     {
         $this->rules = $rules;
@@ -158,7 +170,7 @@ class Scheduler {
 
         $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
             switch ( $rpc->getMethod() ) {
-                case 'handle':
+                case self::INPUT_ACTION_HANDLE:
                     $event = new Event($rpc->getParam('event'));
                     /**
                      * Pass the event to the engine to be handled
@@ -172,7 +184,7 @@ class Scheduler {
                         $this->scheduleNextTimeout();
                     }
                     break;
-                case 'checkpoint':
+                case self::INPUT_ACTION_CHECKPOINT:
                     $this->input_processes_checkpoints[$id] = $rpc->getParams();
                     $this->dirty = true;
                     break;
@@ -443,7 +455,7 @@ class Scheduler {
                 $process = $this->start_action($actionName);
                 /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
                 /** @TODO id should be a sequential number and not generated from mt_rand() */
-                $rpc_request = new JsonRpcRequest('run', $action->getVars(), mt_rand());
+                $rpc_request = new JsonRpcRequest(self::ACTION_RUN_METHOD, $action->getVars(), mt_rand());
                 $this->inflightActionCommands[$rpc_request->getId()] = $action;
                 $this->dirty = true;
                 $process->stdin->write(json_encode($rpc_request) . "\n");
