@@ -6,12 +6,15 @@ use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator;
-
 use Evenement\EventEmitterInterface;
 use Evenement\EventEmitterTrait;
+use DateTimeImmutable;
+use DateTimeInterface;
+use RuntimeException;
 
 use function abs;
 use function array_key_exists;
+use function array_fill;
 use function get_class;
 use function in_array;
 use function spl_object_hash;
@@ -21,7 +24,11 @@ use function array_multisort;
 use function array_map;
 use function array_sum;
 use function array_slice;
+use function array_merge;
 use function serialize;
+use function unserialize;
+use function time;
+use function implode;
 
 class CorrelationEngine implements EventEmitterInterface {
     use EventEmitterTrait;
@@ -243,7 +250,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * Construct a new matcher EventProcessor and attach handlers for any events
      * @param string $className
      * @return IEventMatcher
-     * @throws \RuntimeException;
+     * @throws RuntimeException;
      */
     public function constructMatcher(string $className)
     {
@@ -257,7 +264,7 @@ class CorrelationEngine implements EventEmitterInterface {
         }
         else
         {
-            throw new \RuntimeException("{$className} does not implement EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher");
+            throw new RuntimeException("{$className} does not implement EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher");
         }
     }
 
@@ -288,7 +295,7 @@ class CorrelationEngine implements EventEmitterInterface {
         }
         else
         {
-            throw new \RuntimeException("Expected rules to emit an IEvent or Action. Unable to handle object of class " . get_class($data));
+            throw new RuntimeException("Expected rules to emit an IEvent or Action. Unable to handle object of class " . get_class($data));
         }
     }
 
@@ -330,8 +337,6 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * Add timeout will add or remove a timeout for the matcher passed in.
      * @param IEventMatcher $matcher
-     * @todo Look at whether we should keep track of the sorted state of the timeouts with a flag, do a quick
-     *  insert at the front or end of the array by checking first/last instead of sorting for big sets
      */
     public function addTimeout(IEventMatcher $matcher)
     {
@@ -348,6 +353,10 @@ class CorrelationEngine implements EventEmitterInterface {
         }
     }
 
+    /**
+     * Remove any registered timeout for the matcher
+     * @param IEventMatcher $matcher
+     */
     public function removeTimeout(IEventMatcher $matcher)
     { 
         unset($this->timeouts[spl_object_hash($matcher)]);
@@ -384,7 +393,7 @@ class CorrelationEngine implements EventEmitterInterface {
             $matcher->updateTimeout();
             $this->addTimeout($matcher);
         }
-        $this->checkTimeouts(new \DateTimeImmutable());
+        $this->checkTimeouts(new DateTimeImmutable());
     }
 
     public function isRealtime()
@@ -397,7 +406,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * @param \DateTimeInterface $time
      * @return int Returns the number of alarms triggered by timeouts
      */
-    public function checkTimeouts(\DateTimeInterface $time): int
+    public function checkTimeouts(DateTimeInterface $time): int
     {
         $triggered = 0;
         foreach ( $this->getTimeouts() as $timeout)

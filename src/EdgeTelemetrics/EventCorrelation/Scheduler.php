@@ -12,6 +12,7 @@ use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 use React\Filesystem\Filesystem;
 use React\Filesystem\FilesystemInterface;
+use RuntimeException;
 
 use function array_key_first;
 use function fwrite;
@@ -20,6 +21,20 @@ use function json_encode;
 use function json_decode;
 use function memory_get_usage;
 use function memory_get_peak_usage;
+use function count;
+use function file_exists;
+use function file_put_contents;
+use function file_get_contents;
+use function rename;
+use function get_class;
+use function gc_collect_cycles;
+use function gc_mem_caches;
+use function array_merge;
+use function mt_rand;
+use function error_log;
+use function ini_get;
+use function preg_match;
+use function strtoupper;
 
 use const STDERR;
 use const PHP_EOL;
@@ -112,6 +127,18 @@ class Scheduler {
      */
     const CONTROL_MSG_RESTORED_STATE = 'PHP-EC:Engine:Restored';
 
+    /** @var int Level at which the memory pressure is considered resolved */
+    const MEMORY_PRESSURE_LOW_WATERMARK = 35;
+
+    /** @var int Level at which memory pressure mitigation is undertaken */
+    const MEMORY_PRESSURE_HIGH_WATERMARK = 50;
+
+    /** @var int Max outstanding actions before mitigation action is taken  */
+    const RUNNING_ACTION_LIMIT_HIGH_WATERMARK = 30000;
+
+    /** @var int Level at which outstanding action mitigation action is resolved */
+    const RUNNING_ACTION_LIMIT_LOW_WATERMARK = 500;
+
     /** @var string|null */
     protected $newEventAction = null;
 
@@ -150,7 +177,7 @@ class Scheduler {
                     $this->dirty = true;
                     break;
                 default:
-                    throw new \RuntimeException("Unknown json rpc command {$rpc->getMethod()} from input process");
+                    throw new RuntimeException("Unknown json rpc command {$rpc->getMethod()} from input process");
             }
         });
 
@@ -415,11 +442,8 @@ class Scheduler {
             {
                 $process = $this->start_action($actionName);
                 /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
-                $rpc_request = new JsonRpcRequest();
-                $rpc_request->setMethod('run');
-                $rpc_request->setParams($action->getVars());
-                $id = mt_rand();
-                $rpc_request->setId($id);
+                /** @TODO id should be a sequential number and not generated from mt_rand() */
+                $rpc_request = new JsonRpcRequest('run', $action->getVars(), mt_rand());
                 $this->inflightActionCommands[$rpc_request->getId()] = $action;
                 $this->dirty = true;
                 $process->stdin->write(json_encode($rpc_request) . "\n");
@@ -501,34 +525,29 @@ class Scheduler {
     {
         static $limit = 0;
         static $paused = false;
-        if ($limit === 0)
-        {
+        if ($limit === 0) {
             $limit = $this->calculateMemoryLimit();
         }
 
         $current_memory_usage = memory_get_usage();
         $peak_memory_usage = memory_get_peak_usage(true);
-        //fwrite(STDERR, "Current Memory Usage: " . round($current_memory_usage/1024/1024) . " MB" . PHP_EOL);
-        //fwrite(STDERR, "Peak Memory Usage: " .  round($peak_memory_usage/1024/1024) . " MB" . PHP_EOL);
-        //fwrite(STDERR, "Importers currently " . ($paused ? 'Paused' : 'Running') . PHP_EOL);
 
-        if ($limit === -1)
-        {
+        if ($limit === -1) {
             return;
         }
-        else
-        {
+        else {
             $percent_used = (int)(($current_memory_usage / $limit) * 100);
 
             /** Try releasing memory first and recalculate percentage used */
-            if ($percent_used > 50) {
+            if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK) {
                 gc_collect_cycles();
                 gc_mem_caches();
                 $current_memory_usage = memory_get_usage();
                 $percent_used = (int)(($current_memory_usage / $limit) * 100);
             }
 
-            if ($percent_used > 50 || count($this->inflightActionCommands) > 30000)
+            if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK ||
+                count($this->inflightActionCommands) > self::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
             {
                 fwrite(STDERR, "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes" . PHP_EOL);
 
@@ -543,7 +562,9 @@ class Scheduler {
             }
             else
             {
-                if ($paused && $percent_used <= 35 && count($this->inflightActionCommands) < 500) {
+                if ($paused &&
+                    $percent_used <= self::MEMORY_PRESSURE_LOW_WATERMARK &&
+                    count($this->inflightActionCommands) < self::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
                     foreach ($this->input_processes as $process) {
                         $process->terminate(SIGCONT);
                         fwrite(STDERR, "Resuming input process " . $process->getCommand() . PHP_EOL);
@@ -560,11 +581,15 @@ class Scheduler {
 
         $memory_limit_setting = ini_get('memory_limit');
 
+        if ("-1" == $memory_limit_setting) {
+            return -1;
+        }
+
         preg_match("/^(-?[.0-9]+)([KMG])?$/i", $memory_limit_setting, $matches, PREG_UNMATCHED_AS_NULL);
 
         $bytes = (int)$matches[1];
+        //@TODO Check if we have a memory limit of -1
         $multiplier = (null == $matches[2]) ? 1 : $multiplierTable[strtoupper($matches[2])];
-
 
         $bytes = $bytes * $multiplier;
 
