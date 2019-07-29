@@ -159,7 +159,7 @@ class Scheduler {
         $this->rules = $rules;
     }
 
-    public function register_input_process($id, string $cmd, ?string $wd, array $env = [])
+    public function register_input_process($id, string $cmd, ?string $wd = null, array $env = [])
     {
         $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env];
     }
@@ -211,7 +211,7 @@ class Scheduler {
         $this->newEventAction = $actionName;
     }
 
-    public function register_action(string $name, string $cmd, ?string $wd, ?bool $singleShot = false, array $env = [])
+    public function register_action(string $name, string $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [])
     {
         $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot];
     }
