@@ -4,6 +4,7 @@ namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
 use EdgeTelemetrics\EventCorrelation\Event;
 use Evenement\EventEmitterTrait;
+use RuntimeException;
 use function count;
 use function in_array;
 use function array_key_first;
@@ -171,7 +172,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function complete() : bool
     {
-        return (count($this->consumedEvents) == count(static::EVENTS));
+        return (count($this->consumedEvents) === count(static::EVENTS));
     }
 
     /**
@@ -181,6 +182,23 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     public function getEventChain() : array
     {
         return $this->consumedEvents;
+    }
+
+    /**
+     * Trim the number of events we have consumed, retaining the most recent $length number of events
+     * @param int $length
+     */
+    public function trimEventChain(int $length)
+    {
+        if ($length < 0)
+        {
+            throw new RuntimeException("Length must be equal to or greater than zero");
+        }
+        if ($length >= count($this->consumedEvents))
+        {
+            return;
+        }
+        $this->consumedEvents = array_slice($this->consumedEvents, (-1 * $length), $length, false);
     }
 
     /**
