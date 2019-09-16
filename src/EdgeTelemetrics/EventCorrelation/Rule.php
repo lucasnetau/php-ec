@@ -2,6 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use RuntimeException;
 use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator;
 
@@ -9,17 +10,31 @@ abstract class Rule extends AEventProcessor implements IActionGenerator
 {
     /**
      * Check if the values is within the range inclusive of the boundary values
+     * @param $value
+     * @param $min
+     * @param $max
+     * @return bool
      */
-    protected function rangeInclusiveCheck($value, $min, $max)
+    protected function rangeInclusiveCheck($value, $min, $max) : bool
     {
+        if (! is_numeric($value) || ! is_numeric($min) || !is_numeric($max) ) {
+            return false;
+        }
         return ($value - $min) * ($max - $value) >= 0;
     }
 
     /**
      * Check if the values is within the range exclusive of the boundary values
+     * @param $value
+     * @param $min
+     * @param $max
+     * @return bool
      */
-    protected function rangeExclusiveCheck($value, $min, $max)
+    protected function rangeExclusiveCheck($value, $min, $max) : bool
     {
+        if (! is_numeric($value) || ! is_numeric($min) || !is_numeric($max) ) {
+            return false;
+        }
         return ($value - $min) * ($max - $value) > 0;
     }
 }
