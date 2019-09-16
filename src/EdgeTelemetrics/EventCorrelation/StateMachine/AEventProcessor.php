@@ -65,7 +65,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     protected $actionFired = false;
 
     /**
-     * @var array of Events that have been consumed
+     * @var Event[] array of Events that have been consumed
      */
     protected $consumedEvents = [];
 
