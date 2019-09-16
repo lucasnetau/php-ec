@@ -82,6 +82,10 @@ class CorrelationEngine implements EventEmitterInterface {
         return ($check & $flag) == $flag;
     }
 
+    /**
+     * @TODO Setup queueing of incoming events in a time bucket, setup an out of order tolerance with the help of the bucket to re-ordering incoming events
+     * @TODO Clock source for non-live timestreams should be largest time seen minus the out of order tolerance
+     */
     public function handle(Event $event)
     {
         $handledMatchers = [];
@@ -229,14 +233,6 @@ class CorrelationEngine implements EventEmitterInterface {
             $this->incrStat('completed_matcher', get_class($matcher));
             unset($this->eventProcessors[spl_object_hash($matcher)]);
             unset($matcher);
-        }
-
-        /** When we are parsing historical event stream data manually trigger any timeouts
-         @TODO Don't think this is required here, needed before event processing but not after because the timestream hasn't changed
-         **/
-        if (false === $this->eventstream_live)
-        {
-            $this->checkTimeouts($event->datetime);
         }
 
         /** Flag as dirty **/
