@@ -327,7 +327,7 @@ class Scheduler {
             ->then(function () use ($file) {
                 $file->rename($this->saveFileName)
                     ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
-                        echo "State Saved\n";
+                        //Everything Good
                     }, function (\Exception $e) {
                         $this->dirty = true; /** We didn't save state correctly so we mark the scheduler as dirty to ensure it is attempted again */
                         throw $e;
