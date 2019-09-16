@@ -238,9 +238,10 @@ class Scheduler {
                     unset($this->inflightActionCommands[$response->getId()]);
                 } else {
                     /** Transfer the action from the running queue to the errored queue
-                     * We need to watch this queue and handle any run-away errors (eg a database been unavailable to ingest events)
+                     * @TODO We need to watch this queue and handle any run-away errors (eg a database been unavailable to ingest events)
                      */
-                    $error = ['error' => $response->getError(),
+                    $error = [
+                        'error' => $response->getError(),
                         'action' => $this->inflightActionCommands[$response->getId()],
                     ];
                     $this->erroredActionCommands[] = $error;
@@ -262,6 +263,13 @@ class Scheduler {
                     fwrite(STDERR, "Action $actionName exited with code: $code" . PHP_EOL);
                 } else {
                     fwrite(STDERR, "Action $actionName exited on signal: $term" . PHP_EOL);
+                }
+                if ($code === 255) { //255 = PHP Fatal exit code
+                    fwrite(STDERR, "Action $actionName exit was due to fatal PHP error" . PHP_EOL);
+                }
+                if ($code !== 0)
+                {
+                    /** @TODO Go through inflight actions and look for any that match our exiting with error action. Mark them as errored, otherwise they stay in the inflight action commands queue */
                 }
                 unset($this->runningActions[$actionName]);
                 if (count($this->runningActions) === 0)
