@@ -14,6 +14,8 @@ use function spl_object_hash;
 use function method_exists;
 use function json_encode;
 use function json_decode;
+use function bin2hex;
+use function random_bytes;
 
 /**
  * Class AEventProcessor
@@ -53,6 +55,8 @@ use function json_decode;
 abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     /** We generate events and alarms */
     use EventEmitterTrait;
+
+    protected $instanceId = null;
 
     /**
     * @var bool Are we processing the events live in real time, or is this historical data. Default to false (historical).
@@ -95,6 +99,11 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     const TIMEOUT = 'PT0S';
 
     /**
+     * @var string No Timeout expressed as a period string
+     */
+    const NO_TIMEOUT_STRING = 'PT0S';
+
+    /**
      * @var bool When we are in historical mode do we suppress timeouts.
      */
     const HISTORICAL_IGNORE_TIMEOUT = false; // We can ignore the timeout if following up on events
@@ -103,6 +112,11 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @var array Array of array of events this processor will handle
      */
     const EVENTS = [[]];
+
+    public function __construct() {
+        //Generate a random 5 byte instance id
+        $this->instanceId = bin2hex(random_bytes(5));
+    }
 
     /**
      * Get the event(s) that this state machine class will start on
@@ -309,6 +323,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
             return spl_object_hash($event);
         }, $this->consumedEvents);
 
+        $return['id'] = $this->instanceId;
         $return['actionFired'] = $this->actionFired;
         $return['isTimedOut'] = $this->isTimedOut;
         $return['context'] = $this->context;
@@ -335,6 +350,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         $data = json_decode($data, true);
         $this->unresolved_events = $data['events'];
 
+        $this->instanceId = $data['instanceId'] ?? bin2hex(random_bytes(5)); //Generate a new ID if we don't have one serialized
         $this->actionFired = $data['actionFired'];
         $this->isTimedOut = $data['isTimedOut'];
         $this->context = $data['context'];
