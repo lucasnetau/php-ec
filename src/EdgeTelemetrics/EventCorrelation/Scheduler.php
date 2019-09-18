@@ -424,6 +424,11 @@ class Scheduler {
 
     public function run()
     {
+        if (!$this->isOpcacheEnabled())
+        {
+            fwrite(STDERR, "Opcache is not enabled. This will reduce performance and increase memory usage" . PHP_EOL);
+        }
+
         $this->loop = Factory::create();
         fwrite(STDERR, "Using event loop implementation: " . get_class($this->loop) . PHP_EOL);
 
@@ -613,5 +618,16 @@ class Scheduler {
         $bytes = $bytes * $multiplier;
 
         return $bytes;
+    }
+
+    protected function isOpcacheEnabled()
+    {
+        if (!function_exists('opcache_get_status'))
+        {
+            return false;
+        }
+        $status = opcache_get_status(false);
+
+        return (false !== $status);
     }
 }
