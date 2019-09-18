@@ -143,9 +143,11 @@ class CorrelationEngine implements EventEmitterInterface {
                     $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
                 }
 
+                // If we are timed out then remove any future event watching and flag the matcher for timeout processing.
                 if ($this->isFlagSet($result, $matcher::EVENT_TIMEOUT))
                 {
                     $timedOutMatchers[] = $matcher;
+                    $this->removeWatchForEvents($matcher, $expecting);
                 }
 
                 //Matcher has told us to suppress further processing of this event.
@@ -154,7 +156,7 @@ class CorrelationEngine implements EventEmitterInterface {
                     $suppress = true;
                     /** Record that the event was suppressed */
                     $this->incrStat('suppressed', (string)$event->event);
-                    break;
+                    break; //Jump out of the foreach loop as we are suppressing continued processing of this event.
                 }
             }
         }
@@ -221,7 +223,6 @@ class CorrelationEngine implements EventEmitterInterface {
                 $this->incrStat('completed_matcher', get_class($matcher));
                 unset($this->eventProcessors[spl_object_hash($matcher)]);
                 unset($matcher);
-                continue;
             }
         }
         /**  Fire any action and destroy any timed out matchers **/
@@ -230,7 +231,7 @@ class CorrelationEngine implements EventEmitterInterface {
             $this->removeTimeout($matcher);
             $matcher->fire();
             /** Record stat of matcher timeout */
-            $this->incrStat('completed_matcher', get_class($matcher));
+            $this->incrStat('completed_matcher_timeout', get_class($matcher));
             unset($this->eventProcessors[spl_object_hash($matcher)]);
             unset($matcher);
         }
@@ -421,6 +422,8 @@ class CorrelationEngine implements EventEmitterInterface {
                     /** Remove all references if the matcher is complete */
                     $this->removeWatchForEvents($matcher, $matcher->nextAcceptedEvents());
                     $this->removeTimeout($matcher);
+                    /** Record stat of matcher timeout */
+                    $this->incrStat('matcher_timeout', get_class($matcher));
                     unset($this->eventProcessors[spl_object_hash($matcher)]);
                     unset($matcher);
                 }
