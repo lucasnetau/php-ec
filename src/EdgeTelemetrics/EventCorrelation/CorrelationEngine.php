@@ -57,7 +57,7 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     const EPS_COUNTER_LENGTH = 3600;
 
-    /** @var Last event time based on wall clock time */
+    /** @var int Last event time based on wall clock time */
     protected $lastEventReal;
 
     /** @var array  */
@@ -83,6 +83,8 @@ class CorrelationEngine implements EventEmitterInterface {
     }
 
     /**
+     * @param Event $event
+     * @throws \Exception
      * @TODO Setup queueing of incoming events in a time bucket, setup an out of order tolerance with the help of the bucket to re-ordering incoming events
      * @TODO Clock source for non-live timestreams should be largest time seen minus the out of order tolerance
      */
@@ -171,7 +173,7 @@ class CorrelationEngine implements EventEmitterInterface {
             foreach($this->initialEventLookup[$event->event] as $class)
             {
                 /** If this className has already handled this event, don't create another **/
-                if (in_array($class, $skipMatchers))
+                if (in_array($class, $skipMatchers, true))
                 {
                     continue;
                 }
