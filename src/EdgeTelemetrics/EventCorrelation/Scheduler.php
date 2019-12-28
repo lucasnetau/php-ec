@@ -239,15 +239,17 @@ class Scheduler {
                 } else {
                     /** Transfer the action from the running queue to the errored queue
                      * @TODO We need to watch this queue and handle any run-away errors (eg a database been unavailable to ingest events)
+                     * @TODO This should be put into a function as we call it both here and when an action terminates unexpectedly
                      */
                     $error = [
                         'error' => $response->getError(),
-                        'action' => $this->inflightActionCommands[$response->getId()],
+                        'action' => $this->inflightActionCommands[$response->getId()]['action'],
                     ];
                     $this->erroredActionCommands[] = $error;
                     unset($this->inflightActionCommands[$response->getId()]);
 
-                    fwrite(STDERR, $response->getError()->getMessage() . PHP_EOL);
+                    /** @TODO We should be placing these errors into an external system to be logged and possibly processed */
+                    fwrite(STDERR, $response->getError()->getMessage() . " : " . json_encode($response->getError()->getData()) . PHP_EOL);
                 }
                 /** Release memory used by the inflight action table */
                 if (count($this->inflightActionCommands) === 0)
@@ -257,7 +259,7 @@ class Scheduler {
                 $this->dirty = true;
             });
 
-            $process->on('exit', function ($code, $term) use ($actionName) {
+            $process->on('exit', function ($code, $term) use ($actionName, $process) {
                 /** Action has terminated. If it successfully completed then it will have sent an ack on stdout first before exit */
                 if ($term === null) {
                     fwrite(STDERR, "Action $actionName exited with code: $code" . PHP_EOL);
@@ -269,7 +271,21 @@ class Scheduler {
                 }
                 if ($code !== 0)
                 {
-                    /** @TODO Go through inflight actions and look for any that match our exiting with error action. Mark them as errored, otherwise they stay in the inflight action commands queue */
+                    /** Go through inflight actions and look for any that match our exiting with error action. Mark them as errored, otherwise they stay in the inflight action commands queue */
+                    $pid = $process->getPid();
+                    if (null !== $pid)
+                    {
+                        $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
+                        foreach($terminatedActions as $rpcId => $action) {
+                            $error = [
+                                'error' => 'Action process terminated unexpectedly with code $code',
+                                'action' => $action['action'],
+                            ];
+                            $this->erroredActionCommands[] = $error;
+                            unset($this->inflightActionCommands[$rpcId]);
+                        }
+                        unset($terminatedActions);
+                    }
                 }
                 unset($this->runningActions[$actionName]);
                 if (count($this->runningActions) === 0)
@@ -469,7 +485,8 @@ class Scheduler {
                 /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
                 /** @TODO id should be a sequential number and not generated from mt_rand() */
                 $rpc_request = new JsonRpcRequest(self::ACTION_RUN_METHOD, $action->getVars(), mt_rand());
-                $this->inflightActionCommands[$rpc_request->getId()] = $action;
+                $this->inflightActionCommands[$rpc_request->getId()]['action'] = $action;
+                $this->inflightActionCommands[$rpc_request->getId()]['pid'] = $process->getPid();
                 $this->dirty = true;
                 $process->stdin->write(json_encode($rpc_request) . "\n");
             }
@@ -524,7 +541,7 @@ class Scheduler {
     {
         $state = [];
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
-        $state['actions'] = ['inflight' => $this->inflightActionCommands, 'errored' => $this->erroredActionCommands];
+        $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
         return $state;
     }
 
