@@ -10,7 +10,8 @@
     "ext-json": "*",
     "evenement/evenement": "^3.0",
     "symfony/polyfill-php73": "^1.10",
-    "edgetelemetrics/php-json-rpc": "^1.0.1"
+    "edgetelemetrics/php-json-rpc": "^1.0.1",
+    "edgetelemetrics/timebucket": "dev-master"
   },
   "require-dev": {
     "ext-pcntl": "*",
@@ -27,7 +28,12 @@
     "ext-eio": "^2.0"
   },
   "autoload": {
-    "psr-4": {"EdgeTelemetrics\\EventCorrelation\\": "src/EdgeTelemetrics/EventCorrelation"}
+    "psr-4": {
+      "EdgeTelemetrics\\EventCorrelation\\": "src/"
+    },
+    "files": [
+      "src/functions.php"
+    ]
   },
   "autoload-dev": {
     "classmap": [ "tests/EventProcessors" ]

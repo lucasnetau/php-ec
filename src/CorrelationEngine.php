@@ -30,6 +30,15 @@ use function unserialize;
 use function time;
 use function implode;
 
+/**
+ * @param string $unknownClassName
+ */
+function handleMissingClass(string $unknownClassName) {
+    error_log("Unable to autoload Rule $unknownClassName, generating an alias for cleaning up");
+    /** Alias UndefinedRule to the unknown class */
+    class_alias(UndefinedRule::class, $unknownClassName);
+}
+
 class CorrelationEngine implements EventEmitterInterface {
     use EventEmitterTrait;
 
@@ -495,6 +504,9 @@ class CorrelationEngine implements EventEmitterInterface {
             $event = unserialize($eventData);
             $events[$hash] = $event;
         }
+
+        //Set our handler if we unserialize the engine state and defined classed don't exist anymore (eg Generated Classes)
+        ini_set('unserialize_callback_func', 'EdgeTelemetrics\EventCorrelation\handleMissingClass');
         foreach($state['matchers'] as $matcherState)
         {
             /**
@@ -507,11 +519,17 @@ class CorrelationEngine implements EventEmitterInterface {
              */
             /** @var AEventProcessor $matcher */
             $matcher = unserialize($matcherState);
+            if ($matcher instanceof UndefinedRule /** && error_on_undefined=false */) {
+                // Skip this if the rule is undefined
+                /** @TODO Log the matcherState to a file if we need to fixup and restore */
+                continue;
+            }
             $matcher->resolveEvents($events);
             $this->attachListeners($matcher);
             $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
             $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
         }
+        ini_restore('unserialize_callback_func');
 
         if (true === $state['eventstream_live'])
         {
