@@ -2,6 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use RuntimeException;
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')) {
@@ -45,5 +46,13 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\env')) {
         }
 
         return $env;
+    }
+}
+
+if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
+    function checkpoint($checkpoint)
+    {
+        $rpc = new JsonRpcNotification(Scheduler::INPUT_ACTION_CHECKPOINT, $checkpoint);
+        fwrite(STDOUT, json_encode($rpc) . "\n");
     }
 }
