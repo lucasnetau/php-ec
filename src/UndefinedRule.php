@@ -2,7 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
-abstract class UndefinedRule extends Rule
+class UndefinedRule extends Rule
 {
     public function fire() {}
     public function complete(): bool
