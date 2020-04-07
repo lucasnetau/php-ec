@@ -278,7 +278,7 @@ class Scheduler {
                         $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
                         foreach($terminatedActions as $rpcId => $action) {
                             $error = [
-                                'error' => 'Action process terminated unexpectedly with code $code',
+                                'error' => "Action process terminated unexpectedly with code $code",
                                 'action' => $action['action'],
                             ];
                             $this->erroredActionCommands[] = $error;
