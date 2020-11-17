@@ -262,7 +262,7 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function constructMatcher(string $className)
     {
-        if (is_a($className, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher', true))
+        if (is_a($className, IEventMatcher::class, true))
         {
             /** @var IEventMatcher $matcher */
             $matcher = new $className();
@@ -278,8 +278,8 @@ class CorrelationEngine implements EventEmitterInterface {
 
     public function attachListeners(IEventMatcher $matcher)
     {
-        if (is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator') ||
-            is_a($matcher, 'EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator')
+        if (is_a($matcher, IEventGenerator::class) ||
+            is_a($matcher, IActionGenerator::class)
         ) {
             /** @var IEventGenerator|IActionGenerator $matcher */
             $matcher->on('data', [$this, 'handleEmit']);
@@ -289,15 +289,15 @@ class CorrelationEngine implements EventEmitterInterface {
     public function handleEmit($data)
     {
         /** Check if this is an event */
-        if (is_a($data, 'EdgeTelemetrics\EventCorrelation\IEvent'))
+        if (is_a($data, IEvent::class))
         {
-            /** @var \EdgeTelemetrics\EventCorrelation\IEvent $data */
+            /** @var IEvent $data */
             $this->incrStat('emit_event', $data->event);
             $this->emit('event', [$data]);
         }
-        elseif (is_a($data, 'EdgeTelemetrics\EventCorrelation\Action'))
+        elseif (is_a($data, Action::class))
         {
-            /** @var \EdgeTelemetrics\EventCorrelation\Action $data */
+            /** @var Action $data */
             $this->incrStat('emit_action', $data->getCmd());
             $this->emit('action', [$data]);
         }
