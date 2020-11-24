@@ -235,6 +235,7 @@ class Scheduler {
 
     public function setNewEventAction(string $actionName)
     {
+        error_log("WARNING: New Event Action is deprecated.");
         $this->newEventAction = $actionName;
     }
 
