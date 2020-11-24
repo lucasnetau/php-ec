@@ -56,3 +56,14 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
         fwrite(STDOUT, json_encode($rpc) . "\n");
     }
 }
+
+if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
+    function php_cmd($filename)
+    {
+        if (!($php = getenv('PHP_BINARY')) || !is_executable($php)) {
+            $php = "/usr/bin/php";
+        }
+
+        return escapeshellarg($php) . " -f " . escapeshellarg($filename) . " --";
+    }
+}
