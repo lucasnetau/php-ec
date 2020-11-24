@@ -2,7 +2,10 @@
 
 namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
+use DateTimeInterface;
 use EdgeTelemetrics\EventCorrelation\Event;
+use JsonSerializable;
+use Serializable;
 
 /**
  * Interface IEventMatcher
@@ -10,7 +13,7 @@ use EdgeTelemetrics\EventCorrelation\Event;
  *
  * Interface declaring that we emit can match and handle events.
  */
-Interface IEventMatcher extends \JsonSerializable, \Serializable {
+Interface IEventMatcher extends JsonSerializable, Serializable {
 
     const EVENT_HANDLED = 1;
     const EVENT_SKIPPED = 2;
@@ -32,13 +35,13 @@ Interface IEventMatcher extends \JsonSerializable, \Serializable {
 
     public function alarm();
 
-    public function firstEventDateTime(): ?\DateTimeInterface;
+    public function firstEventDateTime(): ?DateTimeInterface;
 
-    public function lastSeenEventDateTime(): ?\DateTimeInterface;
+    public function lastSeenEventDateTime(): ?DateTimeInterface;
 
     public function getEventChain(): array;
 
-    public function getTimeout(): ?\DateTimeInterface;
+    public function getTimeout(): ?DateTimeInterface;
 
     public function isTimedOut() : bool;
 

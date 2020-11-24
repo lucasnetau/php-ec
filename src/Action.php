@@ -2,41 +2,61 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
-class Action implements \JsonSerializable {
+use RuntimeException;
+use JsonSerializable;
+
+class Action implements JsonSerializable {
 
     /**
      * @var string
      */
-    protected $cmd;
+    protected string $cmd;
 
     /**
      * @var array
      */
-    protected $vars;
+    protected array $vars;
 
     /**
      * Action constructor.
      * @param string $cmd
-     * @param array $vars
+     * @param array|Event $vars
      */
-    public function __construct(string $cmd, array $vars)
+    public function __construct(string $cmd, $vars)
     {
         $this->cmd = $cmd;
-        $this->vars = $vars;
+        if ($vars instanceof Event) {
+            $this->vars = json_decode(json_encode($vars),true);
+        } elseif (is_array($vars)) {
+            $this->vars = $vars;
+        } else {
+            throw new RuntimeException("Invalid variables passed to Action constructor");
+        }
     }
 
-    public function jsonSerialize()
+    /**
+     * @return array
+     */
+    public function jsonSerialize() : array
     {
-        return ['cmd' => $this->cmd,
-                'vars' => $this->vars];
+        return [
+            'cmd' => $this->cmd,
+            'vars' => $this->vars
+        ];
     }
 
-    public function getCmd()
+    /**
+     * @return string
+     */
+    public function getCmd() : string
     {
         return $this->cmd;
     }
 
-    public function getVars()
+    /**
+     * @return array
+     */
+    public function getVars() : array
     {
         return $this->vars;
     }

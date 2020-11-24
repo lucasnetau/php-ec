@@ -2,6 +2,9 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use DateTimeImmutable;
+use DateTimeZone;
+use Exception;
 use function ucfirst;
 use function method_exists;
 use function property_exists;
@@ -15,35 +18,35 @@ class Event implements IEvent {
     /**
      * @var string
      */
-    protected $event;
+    protected string $event;
 
     /**
-     * @var \DateTimeImmutable
+     * @var DateTimeImmutable
      */
-    protected $datetime;
+    protected ?DateTimeImmutable $datetime = null;
 
     /**
-     * @var \DateTimeImmutable
+     * @var DateTimeImmutable
      */
-    protected $receivedTime;
+    protected ?DateTimeImmutable $receivedTime = null;
 
     /**
      * Event constructor.
      * @param array $kvp Key Value pairs
-     * @throws \Exception
+     * @throws Exception
      */
     public function __construct(array $kvp)
     {
         //$this->datetime = DateTime::createFromFormat('U', $kvp['datetime'], new DateTimeZone('UTC'));
         if (isset($kvp['datetime']))
         {
-            $this->datetime = new \DateTimeImmutable($kvp['datetime'], new \DateTimeZone('UTC'));
+            $this->datetime = new DateTimeImmutable($kvp['datetime'], new DateTimeZone('UTC'));
             unset($kvp['datetime']);
         }
         else
         {
             /** If the event data doesn't have a datetime then set it to the server time when received **/
-            $this->datetime = new \DateTimeImmutable();
+            $this->datetime = new DateTimeImmutable();
         }
         foreach ($kvp as $key => $value) {
             $this->$key = $value;
@@ -70,9 +73,9 @@ class Event implements IEvent {
     }
 
     /**
-     * @param \DateTimeImmutable $time
+     * @param DateTimeImmutable $time
      */
-    public function setReceivedTime(\DateTimeImmutable $time)
+    public function setReceivedTime(DateTimeImmutable $time)
     {
         $this->receivedTime = $time;
     }
@@ -80,7 +83,7 @@ class Event implements IEvent {
     /**
      * Get the event datetime. If the receivedTime property is set this will be used
      * as the server time when received was too different from the event timestamp
-     * @return \DateTimeImmutable
+     * @return DateTimeImmutable
      */
     public function getDatetime()
     {
@@ -120,15 +123,15 @@ class Event implements IEvent {
 
     /**
      * @param string $data
-     * @throws \Exception
+     * @throws Exception
      */
     public function unserialize($data)
     {
         $data = json_decode($data, true);
-        $this->datetime = new \DateTimeImmutable($data['datetime']);
+        $this->datetime = new DateTimeImmutable($data['datetime']);
         unset($data['datetime']);
         if (isset($data['receivedTime'])) {
-            $this->receivedTime = new \DateTimeImmutable($data['receivedTime']);
+            $this->receivedTime = new DateTimeImmutable($data['receivedTime']);
             unset($data['receivedTime']);
         }
         foreach($data as $key => $value)

@@ -10,6 +10,7 @@ use Evenement\EventEmitterInterface;
 use Evenement\EventEmitterTrait;
 use DateTimeImmutable;
 use DateTimeInterface;
+use Exception;
 use RuntimeException;
 
 use function abs;
@@ -42,35 +43,35 @@ function handleMissingClass(string $unknownClassName) {
 class CorrelationEngine implements EventEmitterInterface {
     use EventEmitterTrait;
 
-    protected $eventProcessors = [];
+    protected array $eventProcessors = [];
 
-    protected $initialEventLookup = [];
+    protected array $initialEventLookup = [];
 
     /**
      * @var array Array of IEventMatchers
      */
-    protected $waitingForNextEvent = [];
+    protected array $waitingForNextEvent = [];
 
-    protected $timeouts = [];
+    protected array $timeouts = [];
 
-    protected $eventstream_live = false;
+    protected bool $eventstream_live = false;
 
-    protected $dirty = false;
+    protected bool $dirty = false;
 
-    protected $timeoutsSorted = false;
+    protected bool $timeoutsSorted = false;
 
-    protected $epsCounter;
+    protected array $epsCounter;
 
     /**
      * Counter length (in seconds) for recording events per second metrics.
      */
     const EPS_COUNTER_LENGTH = 3600;
 
-    /** @var int Last event time based on wall clock time */
-    protected $lastEventReal;
+    /** @var ?int Last event time based on wall clock time */
+    protected ?int $lastEventReal = null;
 
     /** @var array  */
-    protected $statistics = [];
+    protected array $statistics = [];
 
     const MAX_TIME_VARIANCE = 600; // In seconds
 
@@ -92,12 +93,12 @@ class CorrelationEngine implements EventEmitterInterface {
     }
 
     /**
-     * @param Event $event
-     * @throws \Exception
+     * @param IEvent $event
+     * @throws Exception
      * @TODO Setup queueing of incoming events in a time bucket, setup an out of order tolerance with the help of the bucket to re-ordering incoming events
      * @TODO Clock source for non-live timestreams should be largest time seen minus the out of order tolerance
      */
-    public function handle(Event $event)
+    public function handle(IEvent $event)
     {
         $handledMatchers = [];
         $skipMatchers = [];
@@ -112,7 +113,7 @@ class CorrelationEngine implements EventEmitterInterface {
          */
         if (true === $this->eventstream_live)
         {
-            $now = new \DateTimeImmutable();
+            $now = new DateTimeImmutable();
             if (abs($now->getTimestamp() - $event->datetime->getTimestamp()) > (self::MAX_TIME_VARIANCE))
             {
                 echo "Correcting received time to {$now->format('c')}\n";
@@ -267,12 +268,11 @@ class CorrelationEngine implements EventEmitterInterface {
             /** @var IEventMatcher $matcher */
             $matcher = new $className();
             $this->attachListeners($matcher);
-            /** @var IEventMatcher $matcher */
             return $matcher;
         }
         else
         {
-            throw new RuntimeException("{$className} does not implement EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher");
+            throw new RuntimeException("{$className} does not implement " . IEventMatcher::class);
         }
     }
 
