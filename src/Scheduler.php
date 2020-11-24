@@ -2,6 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use Exception;
 use React\EventLoop\Factory;
 use React\EventLoop\LoopInterface;
 use React\ChildProcess\Process;
@@ -48,69 +49,82 @@ class Scheduler {
     /**
      * @var LoopInterface
      */
-    protected $loop;
+    protected LoopInterface $loop;
 
     /**
      * @var CorrelationEngine
      */
-    protected $engine;
+    protected CorrelationEngine $engine;
 
     /**
      * @var TimerInterface
      */
-    protected $nextTimer;
+    protected TimerInterface $nextTimer;
 
     /**
      * @var array React\ChildProcess
      */
-    protected $input_processes = [];
+    protected array $input_processes = [];
 
     /**
      * @var array Class list of rules
      */
-    protected $rules = [];
+    protected array $rules = [];
 
     /**
      * @var array Process Configuration for input processes
      */
-    protected $input_processes_config = [];
+    protected array $input_processes_config = [];
 
     /**
      * @var array
      */
-    protected $input_processes_checkpoints = [];
+    protected array $input_processes_checkpoints = [];
 
     /**
      * @var array React\ChildProcess Process table to keep track of all action processess that are running.
      */
-    protected $runningActions = [];
+    protected array $runningActions = [];
 
     /**
      * @var array Configuration for actions
      */
-    protected $actionConfig = [];
+    protected array $actionConfig = [];
 
     /**
      * @var array
      */
-    protected $inflightActionCommands = [];
+    protected array $inflightActionCommands = [];
 
     /**
      * @var array
      */
-    protected $erroredActionCommands = [];
+    protected array $erroredActionCommands = [];
 
     /**
      * @var TimerInterface Reference to the periodic task to save state.
      */
-    protected $saveHandler;
+    protected TimerInterface $saveHandler;
 
-    protected $saveFileName = '/tmp/php-ec-savepoint';
+    /**
+     * @var string Filename to save state to
+     */
+    protected string $saveFileName = '/tmp/php-ec-savepoint';
 
     /**
      * @var bool Flag if the scheduler has information that needs to be flushed to the save file.
      */
-    protected $dirty;
+    protected bool $dirty;
+
+    /**
+     * @var bool Flag to ensure we only have one save going on at a time
+     */
+    protected bool $asyncSaveInProgress = false;
+
+    /**
+     * @var float How ofter to save state
+     */
+    protected float $saveStateSeconds = 1;
 
     /**
      * Flag for whether we keep failed actions when loading or drop them.
@@ -140,7 +154,7 @@ class Scheduler {
     const RUNNING_ACTION_LIMIT_LOW_WATERMARK = 500;
 
     /** @var string|null */
-    protected $newEventAction = null;
+    protected ?string $newEventAction = null;
 
     /** @var string RPC Method expected to handle an event */
     const INPUT_ACTION_HANDLE = 'handle';
@@ -203,10 +217,23 @@ class Scheduler {
             } else {
                 fwrite(STDERR, "Input Process {$process->getCommand()} exited on signal: $term" . PHP_EOL);
             }
+            /** @TODO Implement restart of input proceses */
+            /** Remove process from table  */
+            foreach($this->input_processes as $key => $input_process) {
+                if ($input_process === $process) {
+                    unset($this->input_processes[$key]);
+                    break;
+                }
+            }
+            /** We stop processing if there are no input processes available **/
+            if (0 === count($this->input_processes)) {
+                fwrite(STDERR, "No more input processes running. Shutting down" . PHP_EOL);
+                $this->stop();
+            }
         });
     }
 
-    public function setNewEventAction($actionName)
+    public function setNewEventAction(string $actionName)
     {
         $this->newEventAction = $actionName;
     }
@@ -216,11 +243,12 @@ class Scheduler {
         $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot];
     }
 
-    public function start_action($actionName)
+    public function start_action(string $actionName)
     {
         $actionConfig = $this->actionConfig[$actionName];
         /** Handle singleShot processes true === $actionConfig['singleShot'] ||  */
         if (!isset($this->runningActions[$actionName])) {
+            /** If there is no running action then we initialise the process */
             $process = new Process($actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env']);
             $process->start($this->loop);
 
@@ -311,11 +339,11 @@ class Scheduler {
     public function setup_save_state()
     {
         /**
-         * Setup a time to save the state of the correlation engine every every one second
+         * Setup a time to save the state of the correlation engine every every saveStateSeconds
          */
         $filesystem = Filesystem::create($this->loop);
-        $this->saveHandler = $this->loop->addPeriodicTimer(1, function() use ($filesystem) {
-            if ($this->engine->isDirty() || $this->dirty)
+        $this->saveHandler = $this->loop->addPeriodicTimer($this->saveStateSeconds, function() use ($filesystem) {
+            if (($this->engine->isDirty() || $this->dirty) && false === $this->asyncSaveInProgress)
             {
                 /** Clear the dirty flags before calling the async save process.
                  * This ensures that changes that occur between now and the save file
@@ -323,6 +351,7 @@ class Scheduler {
                  */
                 $this->engine->clearDirtyFlag();
                 $this->dirty = false;
+                $this->asyncSaveInProgress = true;
                 $this->saveStateAsync($filesystem);
             }
         });
@@ -335,6 +364,10 @@ class Scheduler {
         ];
     }
 
+    public function setSaveStateInterval(float $seconds) {
+        $this->saveStateSeconds = $seconds;
+    }
+
     public function saveStateAsync(FilesystemInterface $filesystem)
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
@@ -344,11 +377,13 @@ class Scheduler {
                 $file->rename($this->saveFileName)
                     ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
                         //Everything Good
-                    }, function (\Exception $e) {
+                        $this->asyncSaveInProgress = false;
+                    }, function (Exception $e) {
                         $this->dirty = true; /** We didn't save state correctly so we mark the scheduler as dirty to ensure it is attempted again */
+                        $this->asyncSaveInProgress = false;
                         throw $e;
                     });
-            }, function (\Exception $e) {
+            }, function (Exception $e) {
                 throw $e;
             });
     }
@@ -361,7 +396,7 @@ class Scheduler {
     }
 
     /**
-     * @throws \Exception
+     * @throws Exception
      */
     function scheduleNextTimeout()
     {
@@ -466,17 +501,15 @@ class Scheduler {
             }
             $process = new Process($config['cmd'], $config['wd'], $env);
             $this->setup_input_process($process, $id);
-            $this->input_processes[] = $process;
+            $this->input_processes[$id] = $process;
         }
 
-        /** When new events are emitted from the correlation engine we persist them (hopefully) by sending them through an action */
-        $this->engine->on('event', function(IEvent $event) {
-            if (null !== $this->newEventAction) {
-                $action = new Action($this->newEventAction, json_decode(json_encode($event), true));
-                $this->engine->emit('action', [$action]);
-            };
+        /** A rule has emitted an event to a new event and wants us to run it straight through the engine */
+        $this->engine->on('event', function(Event $event) {
+            $this->engine->handle($event);
         });
 
+        /** Handle request to run an action */
         $this->engine->on('action', function(Action $action) {
             $actionName = $action->getCmd();
             if (isset($this->actionConfig[$actionName]))
@@ -537,7 +570,7 @@ class Scheduler {
 
     }
 
-    protected function getState()
+    protected function getState() : array
     {
         $state = [];
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
@@ -563,6 +596,9 @@ class Scheduler {
         }
     }
 
+    /**
+     * Compare our memory usage against the limit set for the PHP process. Pause input processes to allow inflight actions to reduce memory usage
+     */
     protected function checkMemoryPressure()
     {
         static $limit = 0;
@@ -617,7 +653,11 @@ class Scheduler {
         }
     }
 
-    protected function calculateMemoryLimit()
+    /**
+     * @return int
+     * Calculate in Bytes the memory limit set in the PHP configuration
+     */
+    protected function calculateMemoryLimit() : int
     {
         $multiplierTable = ['K' => 1024, 'M' => 1024**2, 'G' => 1024**3];
 
@@ -637,7 +677,7 @@ class Scheduler {
         return $bytes;
     }
 
-    protected function isOpcacheEnabled()
+    protected function isOpcacheEnabled() : bool
     {
         if (!function_exists('opcache_get_status'))
         {
