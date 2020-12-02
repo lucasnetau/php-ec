@@ -67,3 +67,15 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
         return escapeshellarg($php) . " -f " . escapeshellarg($filename) . " --";
     }
 }
+
+/**
+ * @param string $unknownClassName
+ */
+if (! function_exists('EdgeTelemetrics\EventCorrelation\handleMissingClass')) {
+    function handleMissingClass(string $unknownClassName)
+    {
+        error_log("Unable to autoload Rule $unknownClassName, generating an alias for cleaning up");
+        /** Alias UndefinedRule to the unknown class */
+        class_alias(UndefinedRule::class, $unknownClassName);
+    }
+}

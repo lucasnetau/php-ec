@@ -31,15 +31,6 @@ use function unserialize;
 use function time;
 use function implode;
 
-/**
- * @param string $unknownClassName
- */
-function handleMissingClass(string $unknownClassName) {
-    error_log("Unable to autoload Rule $unknownClassName, generating an alias for cleaning up");
-    /** Alias UndefinedRule to the unknown class */
-    class_alias(UndefinedRule::class, $unknownClassName);
-}
-
 class CorrelationEngine implements EventEmitterInterface {
     use EventEmitterTrait;
 
