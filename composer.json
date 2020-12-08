@@ -13,7 +13,7 @@
     "edgetelemetrics/php-json-rpc": "^1.0.2",
     "edgetelemetrics/timebucket": "^0.1.0",
     "clue/ndjson-react": "^1.1.0",
-    "react/child-process": "^0.5.2",
+    "react/child-process": "^0.6.1",
     "react/event-loop": "^1.1.1",
     "react/filesystem": "^0.1.2"
   },
