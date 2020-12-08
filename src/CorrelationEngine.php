@@ -66,6 +66,10 @@ class CorrelationEngine implements EventEmitterInterface {
 
     const MAX_TIME_VARIANCE = 600; // In seconds
 
+    /**
+     * CorrelationEngine constructor.
+     * @param array $rules
+     */
     public function __construct(array $rules)
     {
         foreach($rules as $matcher)
@@ -75,10 +79,15 @@ class CorrelationEngine implements EventEmitterInterface {
                 $this->initialEventLookup[$eventname][] = $matcher;
             }
         }
-        $this->epsCounter = array_fill(0,self::EPS_COUNTER_LENGTH, 0);
+        $this->resetEpsCounters();
     }
 
-    public function isFlagSet(int $check, int $flag)
+    /**
+     * @param int $check
+     * @param int $flag
+     * @return bool
+     */
+    public function isFlagSet(int $check, int $flag) : bool
     {
         return ($check & $flag) == $flag;
     }
@@ -365,7 +374,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * Get the current timeouts for all running state machines. Sort the list prior to returning
      * @return array
      */
-    public function getTimeouts()
+    public function getTimeouts(): array
     {
         //Sort by timeout
         if (false === $this->timeoutsSorted) {
@@ -377,6 +386,9 @@ class CorrelationEngine implements EventEmitterInterface {
         return $this->timeouts;
     }
 
+    /**
+     * Set the Engine to start processing events in real-time against the clock vs historical data
+     */
     public function setEventStreamLive()
     {
         /**
@@ -395,14 +407,18 @@ class CorrelationEngine implements EventEmitterInterface {
         $this->checkTimeouts(new DateTimeImmutable());
     }
 
-    public function isRealtime()
+    /**
+     * Return true if we are processing events in realtime or in historical batches
+     * @return bool
+     */
+    public function isRealtime() : bool
     {
         return $this->eventstream_live;
     }
 
     /**
      * Check if any timeouts are prior to the $time passed and if so trigger the timeout logic for the respective matcher
-     * @param \DateTimeInterface $time
+     * @param DateTimeInterface $time
      * @return int Returns the number of alarms triggered by timeouts
      */
     public function checkTimeouts(DateTimeInterface $time): int
@@ -447,6 +463,10 @@ class CorrelationEngine implements EventEmitterInterface {
         return $triggered;
     }
 
+    /**
+     * Get the current representation of the engine's state as an array
+     * @return array
+     */
     public function getState() : array
     {
         $state = [];
@@ -591,7 +611,7 @@ class CorrelationEngine implements EventEmitterInterface {
 
         /** Check if we have not processed an event for the max measurement period and reset all counters */
         if (($time - $this->lastEventReal) >= self::EPS_COUNTER_LENGTH) {
-            array_fill(0,self::EPS_COUNTER_LENGTH, 0);
+            $this->resetEpsCounters();
         }
         else
         {
@@ -618,7 +638,15 @@ class CorrelationEngine implements EventEmitterInterface {
         }
     }
 
-    public function calcLoad()
+    protected function resetEpsCounters() {
+        $this->epsCounter = array_fill(0,self::EPS_COUNTER_LENGTH, 0);
+    }
+
+    /**
+     * Calculate the Load metrics for the engine
+     * @return array
+     */
+    public function calcLoad() : array
     {
         $time = time();
         $index = $time % self::EPS_COUNTER_LENGTH; /* seconds in an hour. Calculating over an hour */
