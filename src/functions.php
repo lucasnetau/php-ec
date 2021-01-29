@@ -13,7 +13,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')
         ini_set('zlib.output_compression', '0');
         ini_set('output_buffering', '0');
         ini_set('implicit_flush', '1');
-        ob_implicit_flush(1);
+        ob_implicit_flush(true);
         while (ob_get_level() > 0) {
             ob_end_flush();
         }
@@ -30,7 +30,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\env')) {
      * @return string
      * @throws RuntimeException If the variable was requested without a default value (non-optional) then this exception is thrown.
      */
-    function env(string $variableName, $defaultValue = null)
+    function env(string $variableName, $defaultValue = null): string
     {
         // Only mark as optional if the default value was *explicitly* provided.
         $isOptional = (2 === func_num_args());
@@ -58,7 +58,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
-    function php_cmd($filename)
+    function php_cmd($filename): string
     {
         if (!($php = getenv('PHP_BINARY')) || !is_executable($php)) {
             $php = "/usr/bin/php";
