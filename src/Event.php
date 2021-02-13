@@ -21,12 +21,12 @@ class Event implements IEvent {
     protected string $event;
 
     /**
-     * @var DateTimeImmutable
+     * @var ?DateTimeImmutable
      */
     protected ?DateTimeImmutable $datetime = null;
 
     /**
-     * @var DateTimeImmutable
+     * @var ?DateTimeImmutable
      */
     protected ?DateTimeImmutable $receivedTime = null;
 
@@ -83,9 +83,9 @@ class Event implements IEvent {
     /**
      * Get the event datetime. If the receivedTime property is set this will be used
      * as the server time when received was too different from the event timestamp
-     * @return DateTimeImmutable
+     * @return ?DateTimeImmutable
      */
-    public function getDatetime()
+    public function getDatetime() : ?DateTimeImmutable
     {
         if (null === $this->receivedTime)
         {
