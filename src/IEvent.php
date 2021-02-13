@@ -2,8 +2,13 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
-interface IEvent extends \JsonSerializable, \Serializable {
+use DateTimeImmutable;
+use JsonSerializable;
+use Serializable;
 
+interface IEvent extends JsonSerializable, Serializable {
 
+    public function setReceivedTime(DateTimeImmutable $time);
+    public function getDatetime() : ?DateTimeImmutable;
 
 }
