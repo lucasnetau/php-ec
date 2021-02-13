@@ -233,9 +233,12 @@ class Scheduler {
         });
     }
 
-    public function setNewEventAction(string $actionName)
+    /**
+     * Null will unset calling any Action for emitted events
+     * @param string|null $actionName
+     */
+    public function setNewEventAction(?string $actionName)
     {
-        error_log("WARNING: New Event Action is deprecated.");
         $this->newEventAction = $actionName;
     }
 
@@ -244,7 +247,7 @@ class Scheduler {
         $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot];
     }
 
-    public function start_action(string $actionName)
+    public function start_action(string $actionName): Process
     {
         $actionConfig = $this->actionConfig[$actionName];
         /** Handle singleShot processes true === $actionConfig['singleShot'] ||  */
@@ -358,9 +361,10 @@ class Scheduler {
         });
     }
 
-    public function buildState()
+    public function buildState(): array
     {
-        return ['engine' => $this->engine->getState(),
+        return [
+            'engine' => $this->engine->getState(),
             'scheduler' => $this->getState(),
         ];
     }
@@ -505,9 +509,18 @@ class Scheduler {
             $this->input_processes[$id] = $process;
         }
 
-        /** A rule has emitted an event to a new event and wants us to run it straight through the engine */
+        /**
+         * An event has been emitted by a Rule
+         * If the Scheduler has been configured to persist new events via setting newEventAction then we wrap this in the defined Action and emit it via the Engine,
+         * Otherwise we send the new event back through the Correlation Engine as an Event and let it handle it per the defined Rules
+         */
         $this->engine->on('event', function(Event $event) {
-            $this->engine->handle($event);
+            if (null === $this->newEventAction) {
+                $this->engine->handle($event);
+            } else {
+                $action = new Action($this->newEventAction, $event);
+                $this->engine->emit('action', [$action]);
+            }
         });
 
         /** Handle request to run an action */
@@ -568,7 +581,6 @@ class Scheduler {
             return json_decode(file_get_contents($this->saveFileName), true);
         }
         return false;
-
     }
 
     protected function getState() : array
