@@ -1,9 +1,21 @@
 <?php declare(strict_types=1);
 
+/*
+ * This file is part of the PHP Event Correlation package.
+ *
+ * (c) James Lucas <james@lucas.net.au>
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
 namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
+use DateInterval;
+use DateTimeInterface;
 use EdgeTelemetrics\EventCorrelation\Event;
 use Evenement\EventEmitterTrait;
+use Exception;
 use RuntimeException;
 use function count;
 use function in_array;
@@ -56,42 +68,42 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     /** We generate events and alarms */
     use EventEmitterTrait;
 
-    protected $instanceId = null;
+    protected string $instanceId;
 
     /**
     * @var bool Are we processing the events live in real time, or is this historical data. Default to false (historical).
     */
-    protected static $eventstream_live = false;
+    protected static bool $eventstream_live = false;
 
     /**
      * @var bool Flag is actions have been fired. Used to prevent double firing
      */
-    protected $actionFired = false;
+    protected bool $actionFired = false;
 
     /**
      * @var Event[] array of Events that have been consumed
      */
-    protected $consumedEvents = [];
+    protected array $consumedEvents = [];
 
     /**
      * @var array Used by an event processor to keep track of the context of processing.
      */
-    protected $context = [];
+    protected array $context = [];
 
     /**
      * @var bool Flag if the processor has completed due to timeout been reached
      */
-    protected $isTimedOut = false;
+    protected bool $isTimedOut = false;
 
     /**
-     * @var \DateTimeInterface|null Calculated next timeout for the processor
+     * @var ?DateTimeInterface Calculated next timeout for the processor
      */
-    protected $timeout = null;
+    protected ?DateTimeInterface $timeout = null;
 
     /**
      * @var array Used when loading a serialised event processor (two step pass)
      */
-    protected $unresolved_events;
+    protected array $unresolved_events;
 
     /**
      * @var string Timeout expressed as a period string
@@ -114,8 +126,12 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     const EVENTS = [[]];
 
     public function __construct() {
+        $this->instanceId = $this->generateInstanceId();
+    }
+
+    protected function generateInstanceId() : string {
         //Generate a random 5 byte instance id
-        $this->instanceId = bin2hex(random_bytes(5));
+        return bin2hex(random_bytes(5));
     }
 
     /**
@@ -145,13 +161,13 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * Process an incoming event
      * @param Event $event
      * @return int
-     * @throws \Exception
+     * @throws Exception
      */
     public function handle(Event $event) : int
     {
         if ($this->complete())
         {
-            throw new \Exception("Already complete, cannot handle additional events");
+            throw new RuntimeException("Already complete, cannot handle additional events");
         }
         if (in_array($event->event, $this->nextAcceptedEvents(), true))
         {
@@ -217,9 +233,9 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     /**
      * Get the data time of the first event consumed
-     * @return \DateTimeImmutable|null
+     * @return ?DateTimeInterface
      */
-    public function firstEventDateTime(): ?\DateTimeInterface
+    public function firstEventDateTime(): ?DateTimeInterface
     {
         if (0 === count($this->consumedEvents))
         {
@@ -232,7 +248,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * Get the date time of the last event consumed
      * @return \DateTimeImmutable|null
      */
-    public function lastSeenEventDateTime(): ?\DateTimeInterface
+    public function lastSeenEventDateTime(): ?DateTimeInterface
     {
         if (0 === count($this->consumedEvents))
         {
@@ -254,7 +270,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     /**
      * Update the timeout after consuming an event. Cache this value rather than calculating it each call
-     * @throws \Exception
+     * @throws Exception
      */
     public function updateTimeout()
     {
@@ -277,16 +293,16 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         {
             $lastSeen = $this->lastSeenEventDateTime();
             if (null !== $lastSeen) {
-                $this->timeout = $lastSeen->add(new \DateInterval(static::TIMEOUT));
+                $this->timeout = $lastSeen->add(new DateInterval(static::TIMEOUT));
             }
         }
     }
 
     /**
      * Get date time of when this state machine will timeout
-     * @return \DateTimeImmutable|null
+     * @return ?DateTimeInterface
      */
-    public function getTimeout() : ?\DateTimeInterface
+    public function getTimeout() : ?DateTimeInterface
     {
         return $this->timeout;
     }
@@ -327,7 +343,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         $return['actionFired'] = $this->actionFired;
         $return['isTimedOut'] = $this->isTimedOut;
         $return['context'] = $this->context;
-        if ($this->timeout instanceof \DateTimeInterface)
+        if ($this->timeout instanceof DateTimeInterface)
         {
             $return['timeout'] = $this->timeout->format('Y-m-d H:i:s');
         }
@@ -350,7 +366,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         $data = json_decode($data, true);
         $this->unresolved_events = $data['events'];
 
-        $this->instanceId = $data['instanceId'] ?? bin2hex(random_bytes(5)); //Generate a new ID if we don't have one serialized
+        $this->instanceId = $data['instanceId'] ?? $this->generateInstanceId(); //Generate a new ID if we don't have one serialized
         $this->actionFired = $data['actionFired'];
         $this->isTimedOut = $data['isTimedOut'];
         $this->context = $data['context'];
