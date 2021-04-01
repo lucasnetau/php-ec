@@ -701,12 +701,12 @@ class Scheduler {
 
     protected function isOpcacheEnabled() : bool
     {
-        if (!function_exists('opcache_get_status'))
+        if (function_exists('opcache_get_status'))
         {
-            return false;
-        }
-        $status = opcache_get_status(false);
+            $status = opcache_get_status(false);
 
-        return (false !== $status);
+            return (false !== $status);
+        }
+        return false;
     }
 }
