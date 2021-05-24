@@ -22,7 +22,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')
         ini_set('zlib.output_compression', '0');
         ini_set('output_buffering', '0');
         ini_set('implicit_flush', '1');
-        ob_implicit_flush(true);
+        ob_implicit_flush(1);
         while (ob_get_level() > 0) {
             ob_end_flush();
         }
@@ -35,11 +35,11 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\env')) {
      * Helper for referencing environment variables with defaults
      *
      * @param string $variableName The name of the environment variable.
-     * @param mixed $defaultValue The default value to be used if the environment variable is not defined.
+     * @param ?string $defaultValue The default value to be used if the environment variable is not defined.
      * @return string
      * @throws RuntimeException If the variable was requested without a default value (non-optional) then this exception is thrown.
      */
-    function env(string $variableName, $defaultValue = null): string
+    function env(string $variableName, ?string $defaultValue = null): string
     {
         // Only mark as optional if the default value was *explicitly* provided.
         $isOptional = (2 === func_num_args());
