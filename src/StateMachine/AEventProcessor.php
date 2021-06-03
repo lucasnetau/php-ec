@@ -158,6 +158,16 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     }
 
     /**
+     * Check if we accept this event type
+     * @param Event $event
+     * @return bool
+     */
+    protected function acceptEventType(Event $event) : bool {
+        $acceptedTypes = $this->nextAcceptedEvents();
+        return in_array($event->event, $acceptedTypes, true) || in_array(IEventMatcher::EVENT_MATCH_ANY, $acceptedTypes, true);
+    }
+
+    /**
      * Process an incoming event
      * @param Event $event
      * @return int
@@ -169,19 +179,16 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         {
             throw new RuntimeException("Already complete, cannot handle additional events");
         }
-        if (in_array($event->event, $this->nextAcceptedEvents(), true))
+        if ($this->acceptEventType($event) && $this->acceptEvent($event))
         {
-            if ($this->acceptEvent($event))
+            if (!$this->acceptEventTime($event))
             {
-                if (!$this->acceptEventTime($event))
-                {
-                    $this->isTimedOut = true;
-                    return self::EVENT_TIMEOUT;
-                }
-                $this->consumedEvents[] = $event;
-                $this->updateTimeout();
-                return self::EVENT_HANDLED;
+                $this->isTimedOut = true;
+                return self::EVENT_TIMEOUT;
             }
+            $this->consumedEvents[] = $event;
+            $this->updateTimeout();
+            return self::EVENT_HANDLED;
         }
         return self::EVENT_SKIPPED;
     }

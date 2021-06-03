@@ -23,6 +23,7 @@ use Serializable;
  * Interface declaring that we emit can match and handle events.
  */
 Interface IEventMatcher extends JsonSerializable, Serializable {
+    const EVENT_MATCH_ANY = '*';
 
     const EVENT_HANDLED = 1;
     const EVENT_SKIPPED = 2;
