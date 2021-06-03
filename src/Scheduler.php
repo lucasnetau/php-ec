@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use DateTimeImmutable;
 use Exception;
 use React\EventLoop\Factory;
 use React\EventLoop\LoopInterface;
@@ -91,7 +92,7 @@ class Scheduler {
     protected array $input_processes_checkpoints = [];
 
     /**
-     * @var array React\ChildProcess Process table to keep track of all action processess that are running.
+     * @var array React\ChildProcess Process table to keep track of all action processes that are running.
      */
     protected array $runningActions = [];
 
@@ -226,7 +227,7 @@ class Scheduler {
             } else {
                 fwrite(STDERR, "Input Process {$process->getCommand()} exited on signal: $term" . PHP_EOL);
             }
-            /** @TODO Implement restart of input proceses */
+            /** @TODO Implement restart of input processes */
             /** Remove process from table  */
             foreach($this->input_processes as $key => $input_process) {
                 if ($input_process === $process) {
@@ -424,7 +425,7 @@ class Scheduler {
         $timeouts = $this->engine->getTimeouts();
         if (!empty($timeouts)) {
             $nextTimeout = $timeouts[array_key_first($timeouts)];
-            $now = new \DateTimeImmutable();
+            $now = new DateTimeImmutable();
             $difference = $nextTimeout['timeout']->getTimestamp() - $now->getTimestamp();
 
             echo "Next timeout : {$nextTimeout['timeout']->format("c")}, Now: {$now->format("c")} \n";
@@ -432,7 +433,7 @@ class Scheduler {
             //If timeout has already past then manually check, this may block if we have fallen behind
             if ($difference <= 0) {
                 echo "Timeout already passed\n";
-                $this->engine->checkTimeouts(new \DateTimeImmutable());
+                $this->engine->checkTimeouts(new DateTimeImmutable());
                 $this->scheduleNextTimeout();
             } else {
                 $this->nextTimer = $this->loop->addTimer($difference, function (){
@@ -440,7 +441,7 @@ class Scheduler {
                      * same time. Use the check timeouts function to process any and all timeouts.
                      */
                     echo "Timeout passed\n";
-                    $this->engine->checkTimeouts(new \DateTimeImmutable());
+                    $this->engine->checkTimeouts(new DateTimeImmutable());
                     $this->scheduleNextTimeout();
                 });
                 echo "Timer set for {$this->nextTimer->getInterval()} seconds\n";
@@ -469,9 +470,9 @@ class Scheduler {
          */
         $this->loop->futureTick(function() use ($savedState) {
             if (false === $savedState) {
-                $event = new Event(['event' => self::CONTROL_MSG_NEW_STATE]);
+                $event = new Event(['event' => static::CONTROL_MSG_NEW_STATE]);
             } else {
-                $event = new Event(['event' => self::CONTROL_MSG_RESTORED_STATE]);
+                $event = new Event(['event' => static::CONTROL_MSG_RESTORED_STATE]);
             }
             /**
              * Pass the event to the engine to be handled
@@ -511,7 +512,7 @@ class Scheduler {
             /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
             if (isset($this->input_processes_checkpoints[$id]))
             {
-                $env = array_merge([self::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
+                $env = array_merge([static::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
             }
             $process = new Process($config['cmd'], $config['wd'], $env);
             $this->setup_input_process($process, $id);
@@ -613,7 +614,7 @@ class Scheduler {
                 error_log("Large number of failed actions. Memory consumption for state table may be large.");
             }
         }
-        if (true === self::PRESERVE_FAILED_EVENTS_ONLOAD) {
+        if (true === static::PRESERVE_FAILED_EVENTS_ONLOAD) {
             $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
         }
     }
@@ -694,9 +695,7 @@ class Scheduler {
         $bytes = (int)$matches[1];
         $multiplier = (null == $matches[2]) ? 1 : $multiplierTable[strtoupper($matches[2])];
 
-        $bytes = $bytes * $multiplier;
-
-        return $bytes;
+        return $bytes * $multiplier;
     }
 
     protected function isOpcacheEnabled() : bool
