@@ -21,7 +21,18 @@ use function get_object_vars;
 use function json_encode;
 use function json_decode;
 
+/**
+ * Class Event
+ * @package EdgeTelemetrics\EventCorrelation
+ * @property mixed $id
+ * @property string $event
+ * @property ?DateTimeImmutable $datetime
+ * @property ?DateTimeImmutable $receivedTime
+ */
 class Event implements IEvent {
+    /**
+     * @var mixed
+     */
     protected $id;
 
     /**
@@ -106,9 +117,9 @@ class Event implements IEvent {
     }
 
     /**
-     * @return array|mixed
+     * @return array
      */
-    public function jsonSerialize()
+    public function jsonSerialize() : array
     {
         $object = get_object_vars($this);
         $object['datetime'] = $this->datetime->format('c');
