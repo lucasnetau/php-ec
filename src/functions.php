@@ -14,6 +14,8 @@ namespace EdgeTelemetrics\EventCorrelation;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use RuntimeException;
 
+use const PHP_BINARY;
+
 if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')) {
 
     function disableOutputBuffering()
@@ -69,11 +71,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
 if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
     function php_cmd($filename): string
     {
-        if (!($php = getenv('PHP_BINARY')) || !is_executable($php)) {
-            $php = "/usr/bin/php";
-        }
-
-        return escapeshellarg($php) . " -f " . escapeshellarg($filename) . " --";
+        return escapeshellarg(PHP_BINARY) . " -f " . escapeshellarg($filename) . " --";
     }
 }
 
