@@ -69,7 +69,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
-    function php_cmd($filename): string
+    function php_cmd(string $filename): string
     {
         return escapeshellarg(PHP_BINARY) . " -f " . escapeshellarg($filename) . " --";
     }
