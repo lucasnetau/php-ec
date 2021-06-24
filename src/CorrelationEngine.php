@@ -605,7 +605,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * @param string $group
      * @param int $incr
      */
-    public function incrStat(string $group, string $name, $incr = 1)
+    public function incrStat(string $group, string $name, int $incr = 1)
     {
         if (!isset($this->statistics[$group])) { $this->statistics[$group] = []; }
         if (!isset($this->statistics[$group][$name])) { $this->statistics[$group][$name] = 0; }
