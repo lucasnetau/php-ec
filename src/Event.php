@@ -74,6 +74,14 @@ class Event implements IEvent {
     }
 
     /**
+     * @param string $event_name
+     * @return bool
+     */
+    public function is_event(string $event_name) : bool {
+        return $this->event === $event_name;
+    }
+
+    /**
      * Will return class variable, will first look for a function get<Name> and then check class properties
      * @param string $name
      * @return mixed|null
@@ -138,7 +146,7 @@ class Event implements IEvent {
      */
     public function serialize()
     {
-        return json_encode($this);
+        return json_encode($this, JSON_PRESERVE_ZERO_FRACTION|JSON_UNESCAPED_SLASHES);
     }
 
     /**
