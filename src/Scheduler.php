@@ -606,6 +606,7 @@ class Scheduler {
         $this->input_processes_checkpoints = $state['input']['checkpoints'];
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
         /** @TODO, this could be a big array, we need to handle that in a memory sensitive way */
+        /** @TODO - Replay any errored actions, then replay any inflight actions recorded. If these fail then we should thrown an error and exit. Ensure no dataloss */
         if (count($state['actions']['errored']) > 0)
         {
             error_log("Failed actions detected from previous execution");
