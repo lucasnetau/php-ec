@@ -143,9 +143,10 @@ class CorrelationEngine implements EventEmitterInterface {
         /**
          * Check existing state machines first to see if the event can be handled
          */
-        if (array_key_exists($event->event, $this->waitingForNextEvent))
+        foreach([$event->event, IEventMatcher::EVENT_MATCH_ANY] as $waiting_key)
         {
-            foreach($this->waitingForNextEvent[$event->event] as $key => $matcher)
+            if (!array_key_exists($waiting_key, $this->waitingForNextEvent)) { continue; }
+            foreach($this->waitingForNextEvent[$waiting_key] as $key => $matcher)
             {
                 /* @var $matcher IEventMatcher */
                 $expecting = $matcher->nextAcceptedEvents();
@@ -187,42 +188,38 @@ class CorrelationEngine implements EventEmitterInterface {
          * A new state machine will not be created if an existing state machine suppressed the event
          * or if a state machine of the same class handled the event
          */
-        if (false === $suppress && array_key_exists($event->event, $this->initialEventLookup))
+        if (false === $suppress)
         {
-            foreach($this->initialEventLookup[$event->event] as $class)
-            {
-                /** If this className has already handled this event, don't create another **/
-                if (in_array($class, $skipMatchers, true))
-                {
-                    continue;
-                }
-                $matcher = $this->constructMatcher($class);
-                $result = $matcher->handle($event);
-                if ($this->isFlagSet($result, $matcher::EVENT_HANDLED))
-                {
-                    $handledMatchers[] = $matcher;
-                    $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
-                    $this->incrStat('init_matcher', $class);
-                    $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
-
-                    if (!$matcher->complete())
-                    {
-                        $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
+            foreach([$event->event, IEventMatcher::EVENT_MATCH_ANY] as $waiting_key) {
+                if (!array_key_exists($waiting_key, $this->initialEventLookup)) { continue; }
+                foreach ($this->initialEventLookup[$waiting_key] as $class) {
+                    /** If this className has already handled this event, don't create another **/
+                    if (in_array($class, $skipMatchers, true)) {
+                        continue;
                     }
-                }
-                else
-                {
-                    //Matcher did not want our event after all, discard it.
-                    unset($matcher);
-                    continue;
-                }
+                    $matcher = $this->constructMatcher($class);
+                    $result = $matcher->handle($event);
+                    if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
+                        $handledMatchers[] = $matcher;
+                        $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
+                        $this->incrStat('init_matcher', $class);
+                        $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
 
-                /** The current matcher has told us to suppress further processing of this event, break out of processing any further */
-                if ($this->isFlagSet($result, $matcher::EVENT_SUPPRESS))
-                {
-                    /** Record that the event was suppressed */
-                    $this->incrStat('suppressed', (string)$event->event);
-                    break;
+                        if (!$matcher->complete()) {
+                            $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
+                        }
+                    } else {
+                        //Matcher did not want our event after all, discard it.
+                        unset($matcher);
+                        continue;
+                    }
+
+                    /** The current matcher has told us to suppress further processing of this event, break out of processing any further */
+                    if ($this->isFlagSet($result, $matcher::EVENT_SUPPRESS)) {
+                        /** Record that the event was suppressed */
+                        $this->incrStat('suppressed', (string)$event->event);
+                        break;
+                    }
                 }
             }
         }
@@ -537,7 +534,7 @@ class CorrelationEngine implements EventEmitterInterface {
         foreach($state['events'] as $hash => $eventData)
         {
             /**
-             * First we unserialize all the events. We construct a table using the saved  object hashes instead of the new ones
+             * First we unserialize all the events. We construct a table using the saved object hashes instead of the new ones
              * to allow the saved state machines to identify their events.
              */
             $event = unserialize($eventData);
