@@ -34,5 +34,10 @@
     "files": [
       "src/functions.php"
     ]
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "EdgeTelemetrics\\EventCorrelation\\tests\\": "tests/"
+    }
   }
 }
