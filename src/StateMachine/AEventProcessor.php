@@ -222,6 +222,30 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     }
 
     /**
+     * Get the first event we handled
+     * @return Event|null
+     */
+    public function getFirstEvent() : ?Event {
+        if (0 === count($this->consumedEvents))
+        {
+            return null;
+        }
+        return $this->consumedEvents[array_key_first($this->consumedEvents)];
+    }
+
+    /**
+     * Get the most recent (last) event we handled
+     * @return Event|null
+     */
+    public function getLastEvent() : ?Event {
+        if (0 === count($this->consumedEvents))
+        {
+            return null;
+        }
+        return $this->consumedEvents[array_key_last($this->consumedEvents)];
+    }
+
+    /**
      * Trim the number of events we have consumed, retaining the most recent $length number of events
      * @param int $length
      */
