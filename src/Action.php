@@ -14,6 +14,10 @@ namespace EdgeTelemetrics\EventCorrelation;
 use RuntimeException;
 use JsonSerializable;
 
+/**
+ * Class Action
+ * @package EdgeTelemetrics\EventCorrelation
+ */
 class Action implements JsonSerializable {
 
     /**

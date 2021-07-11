@@ -11,6 +11,11 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+/**
+ * Class UndefinedRule
+ * @package EdgeTelemetrics\EventCorrelation
+ * An alias to this Rule will be automatically created by the CorrelationEngine if when loading saved state a Rule class definition is no longer found.
+ */
 class UndefinedRule extends Rule
 {
     public function fire() {}

@@ -53,6 +53,10 @@ use const SIGINT;
 use const SIGTERM;
 use const SIGHUP;
 
+/**
+ * Class Scheduler
+ * @package EdgeTelemetrics\EventCorrelation
+ */
 class Scheduler {
     const CHECKPOINT_VARNAME = 'PHPEC_CHECKPOINT';
 
@@ -183,11 +187,21 @@ class Scheduler {
         $this->rules = $rules;
     }
 
+    /**
+     * @param string|int $id
+     * @param string $cmd
+     * @param string|null $wd
+     * @param array $env
+     */
     public function register_input_process($id, string $cmd, ?string $wd = null, array $env = [])
     {
         $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env];
     }
 
+    /**
+     * @param Process $process
+     * @param int|string $id
+     */
     public function setup_input_process(Process $process, $id) {
         $process->start($this->loop);
         $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
@@ -252,11 +266,22 @@ class Scheduler {
         $this->newEventAction = $actionName;
     }
 
+    /**
+     * @param string $name
+     * @param string $cmd
+     * @param string|null $wd
+     * @param bool|null $singleShot
+     * @param array $env
+     */
     public function register_action(string $name, string $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [])
     {
         $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot];
     }
 
+    /**
+     * @param string $actionName
+     * @return Process
+     */
     public function start_action(string $actionName): Process
     {
         $actionConfig = $this->actionConfig[$actionName];
@@ -345,11 +370,17 @@ class Scheduler {
         return $this->runningActions[$actionName];
     }
 
+    /**
+     * @param string $filename
+     */
     public function setSavefileName(string $filename)
     {
         $this->saveFileName = $filename;
     }
 
+    /**
+     *
+     */
     public function setup_save_state()
     {
         /**
@@ -371,6 +402,9 @@ class Scheduler {
         });
     }
 
+    /**
+     * @return array
+     */
     public function buildState(): array
     {
         return [
@@ -379,10 +413,16 @@ class Scheduler {
         ];
     }
 
+    /**
+     * @param float $seconds
+     */
     public function setSaveStateInterval(float $seconds) {
         $this->saveStateSeconds = $seconds;
     }
 
+    /**
+     * @param FilesystemInterface $filesystem
+     */
     public function saveStateAsync(FilesystemInterface $filesystem)
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
@@ -403,6 +443,9 @@ class Scheduler {
             });
     }
 
+    /**
+     *
+     */
     public function saveStateSync()
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
@@ -449,6 +492,9 @@ class Scheduler {
         }
     }
 
+    /**
+     *
+     */
     protected function restoreState()
     {
         /** Load State from save file */
@@ -488,6 +534,9 @@ class Scheduler {
         });
     }
 
+    /**
+     * Start the Engine
+     */
     public function run()
     {
         if (!$this->isOpcacheEnabled())
@@ -578,12 +627,18 @@ class Scheduler {
         $this->loop->run();
     }
 
+    /**
+     *
+     */
     public function stop()
     {
         $this->loop->stop();
         $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
     }
 
+    /**
+     * @return false|mixed
+     */
     public function loadStateFromFile()
     {
         if (file_exists($this->saveFileName))
@@ -593,6 +648,9 @@ class Scheduler {
         return false;
     }
 
+    /**
+     * @return array
+     */
     protected function getState() : array
     {
         $state = [];
@@ -601,6 +659,9 @@ class Scheduler {
         return $state;
     }
 
+    /**
+     * @param array $state
+     */
     public function setState(array $state)
     {
         $this->input_processes_checkpoints = $state['input']['checkpoints'];
@@ -629,50 +690,47 @@ class Scheduler {
         static $paused = false;
         if ($limit === 0) {
             $limit = $this->calculateMemoryLimit();
+        } elseif ($limit === -1) {
+            return; //We are configured for unlimited memory so we disable memory pressure checks
         }
 
         $current_memory_usage = memory_get_usage();
         $peak_memory_usage = memory_get_peak_usage(true);
 
-        if ($limit === -1) {
-            return;
-        }
-        else {
+        $percent_used = (int)(($current_memory_usage / $limit) * 100);
+
+        /** Try releasing memory first and recalculate percentage used */
+        if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK) {
+            gc_collect_cycles();
+            gc_mem_caches();
+            $current_memory_usage = memory_get_usage();
             $percent_used = (int)(($current_memory_usage / $limit) * 100);
+        }
 
-            /** Try releasing memory first and recalculate percentage used */
-            if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK) {
-                gc_collect_cycles();
-                gc_mem_caches();
-                $current_memory_usage = memory_get_usage();
-                $percent_used = (int)(($current_memory_usage / $limit) * 100);
-            }
+        if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK ||
+            count($this->inflightActionCommands) > self::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
+        {
+            fwrite(STDERR, "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes" . PHP_EOL);
 
-            if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK ||
-                count($this->inflightActionCommands) > self::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
+            foreach($this->input_processes as $process)
             {
-                fwrite(STDERR, "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes" . PHP_EOL);
-
-                foreach($this->input_processes as $process)
-                {
-                    if ($process->isRunning()) {
-                        $process->terminate(SIGSTOP);
-                        fwrite(STDERR, "Stopped input process " . $process->getCommand() . PHP_EOL);
-                    }
+                if ($process->isRunning()) {
+                    $process->terminate(SIGSTOP);
+                    fwrite(STDERR, "Stopped input process " . $process->getCommand() . PHP_EOL);
                 }
-                $paused = true;
             }
-            else
-            {
-                if ($paused &&
-                    $percent_used <= self::MEMORY_PRESSURE_LOW_WATERMARK &&
-                    count($this->inflightActionCommands) < self::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
-                    foreach ($this->input_processes as $process) {
-                        $process->terminate(SIGCONT);
-                        fwrite(STDERR, "Resuming input process " . $process->getCommand() . PHP_EOL);
-                    }
-                    $paused = false;
+            $paused = true;
+        }
+        else
+        {
+            if ($paused &&
+                $percent_used <= self::MEMORY_PRESSURE_LOW_WATERMARK &&
+                count($this->inflightActionCommands) < self::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
+                foreach ($this->input_processes as $process) {
+                    $process->terminate(SIGCONT);
+                    fwrite(STDERR, "Resuming input process " . $process->getCommand() . PHP_EOL);
                 }
+                $paused = false;
             }
         }
     }
@@ -699,6 +757,9 @@ class Scheduler {
         return $bytes * $multiplier;
     }
 
+    /**
+     * @return bool
+     */
     protected function isOpcacheEnabled() : bool
     {
         if (function_exists('opcache_get_status'))

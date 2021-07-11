@@ -15,6 +15,10 @@ use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Rule;
 use Exception;
 
+/**
+ * Class ValidateEnrichFilter
+ * @package EdgeTelemetrics\EventCorrelation\Rule
+ */
 abstract class ValidateEnrichFilter extends Rule
 {
     protected bool $passed_checks = true;

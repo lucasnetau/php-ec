@@ -40,6 +40,10 @@ use function unserialize;
 use function time;
 use function implode;
 
+/**
+ * Class CorrelationEngine
+ * @package EdgeTelemetrics\EventCorrelation
+ */
 class CorrelationEngine implements EventEmitterInterface {
     use EventEmitterTrait;
 
@@ -102,12 +106,12 @@ class CorrelationEngine implements EventEmitterInterface {
     }
 
     /**
-     * @param IEvent $event
+     * @param Event $event
      * @throws Exception
      * @TODO Setup queueing of incoming events in a time bucket, setup an out of order tolerance with the help of the bucket to re-ordering incoming events
      * @TODO Clock source for non-live timestreams should be largest time seen minus the out of order tolerance
      */
-    public function handle(IEvent $event)
+    public function handle(Event $event)
     {
         $handledMatchers = [];
         $skipMatchers = [];
@@ -146,7 +150,7 @@ class CorrelationEngine implements EventEmitterInterface {
         foreach([$event->event, IEventMatcher::EVENT_MATCH_ANY] as $waiting_key)
         {
             if (!array_key_exists($waiting_key, $this->waitingForNextEvent)) { continue; }
-            foreach($this->waitingForNextEvent[$waiting_key] as $key => $matcher)
+            foreach($this->waitingForNextEvent[$waiting_key] as $matcher)
             {
                 /* @var $matcher IEventMatcher */
                 $expecting = $matcher->nextAcceptedEvents();
@@ -278,10 +282,13 @@ class CorrelationEngine implements EventEmitterInterface {
         }
         else
         {
-            throw new RuntimeException("{$className} does not implement " . IEventMatcher::class);
+            throw new RuntimeException("$className does not implement " . IEventMatcher::class);
         }
     }
 
+    /**
+     * @param IEventMatcher $matcher
+     */
     public function attachListeners(IEventMatcher $matcher)
     {
         if (is_a($matcher, IEventGenerator::class) ||
@@ -292,18 +299,19 @@ class CorrelationEngine implements EventEmitterInterface {
         }
     }
 
-    public function handleEmit($data)
+    /**
+     * @param object $data
+     */
+    public function handleEmit(object $data)
     {
         /** Check if this is an event */
-        if (is_a($data, IEvent::class))
+        if (is_a($data, Event::class))
         {
-            /** @var IEvent $data */
             $this->incrStat('emit_event', $data->event);
             $this->emit('event', [$data]);
         }
         elseif (is_a($data, Action::class))
         {
-            /** @var Action $data */
             $this->incrStat('emit_action', $data->getCmd());
             $this->emit('action', [$data]);
         }
@@ -527,7 +535,10 @@ class CorrelationEngine implements EventEmitterInterface {
         return $state;
     }
 
-    public function setState($state)
+    /**
+     * @param array $state
+     */
+    public function setState(array $state)
     {
         $this->statistics = $state['statistics'];
         $events = [];
@@ -623,6 +634,9 @@ class CorrelationEngine implements EventEmitterInterface {
         $this->lastEventReal = $time;
     }
 
+    /**
+     * Shifts along the Events Per Second counters as time progresses
+     */
     public function flushOldEps()
     {
         $time = time();
@@ -663,13 +677,16 @@ class CorrelationEngine implements EventEmitterInterface {
         }
     }
 
+    /**
+     * Clear the Event Per Second counters
+     */
     protected function resetEpsCounters() {
         $this->epsCounter = array_fill(0,self::EPS_COUNTER_LENGTH, 0);
     }
 
     /**
      * Calculate the Load metrics for the engine
-     * @return array
+     * @return array{lastEvent: int, hour: int, fifteen: int, minute: int, counter: string}
      */
     public function calcLoad() : array
     {
