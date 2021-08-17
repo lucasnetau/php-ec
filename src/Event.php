@@ -60,7 +60,9 @@ class Event implements IEvent {
         //$this->datetime = DateTime::createFromFormat('U', $kvp['datetime'], new DateTimeZone('UTC'));
         if (isset($kvp['datetime']))
         {
-            $this->datetime = new DateTimeImmutable($kvp['datetime'], new DateTimeZone('UTC'));
+            //Parse the date string into a DateTimeImmutable (supports timezone encoded in string), then normalise the datetime to UTC timezone
+            $timezone = new DateTimeZone('UTC');
+            $this->datetime = (new DateTimeImmutable($kvp['datetime'], $timezone))->setTimezone($timezone);
             unset($kvp['datetime']);
         }
         else
