@@ -16,8 +16,8 @@ $engine = new CorrelationEngine([
 ]);
 
 try {
-    $engine->handle(new Event(['event' => 'Test:Event:1',]));
-    $engine->handle(new Event(['event' => 'Test:Event:Single',]));
+    $engine->handle(new Event(['event' => 'Test:Event:1','datetime' => '2021-06-01T00:00:00+10']));
+    $engine->handle(new Event(['event' => 'Test:Event:Single','datetime' => '2021-06-01T00:00:00+10']));
 } catch (Exception $e) {
     error_log("Engine threw an error: " . $e->getMessage());
 }
