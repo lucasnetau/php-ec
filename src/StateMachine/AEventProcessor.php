@@ -389,7 +389,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     public function serialize()
     {
-        return json_encode($this, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK | JSON_PRESERVE_ZERO_FRACTION);
+        return json_encode($this, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
     }
 
     public function unserialize($data)

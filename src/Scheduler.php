@@ -427,7 +427,7 @@ class Scheduler {
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         $file = $filesystem->file($filename);
-        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK))
+        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
             ->then(function () use ($file) {
                 $file->rename($this->saveFileName)
                     ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
@@ -449,7 +449,7 @@ class Scheduler {
     public function saveStateSync()
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
-        file_put_contents($filename, json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_NUMERIC_CHECK));
+        file_put_contents($filename, json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         rename($filename, $this->saveFileName);
     }
 
@@ -511,6 +511,10 @@ class Scheduler {
             unset($savedState['engine']);
         }
 
+        /** Force a run of the PHP GC and release caches. This helps clearing out memory consumed by restoring state from a large json file */
+        gc_collect_cycles();
+        gc_mem_caches();
+
         /** Inject some synthetic events in to the engine to flag that the engine is starting for the first time or restoring
          * Rules can handle these events for initialisation purposes (handy for setting up rules that detect when an event is missing)
          */
@@ -549,10 +553,6 @@ class Scheduler {
 
         /** Restore the state of the scheduler and engine */
         $this->restoreState();
-
-        /** Force a run of the PHP GC and release caches. This helps clearing out memory consumed by restoring state from a large json file */
-        gc_collect_cycles();
-        gc_mem_caches();
 
         /** Start input processes */
         foreach ($this->input_processes_config as $id => $config)
@@ -610,14 +610,21 @@ class Scheduler {
 
         /** Gracefully shutdown */
         // ctrl+c
-        $this->loop->addSignal(SIGINT, array($this, 'stop'));
+        $this->loop->addSignal(SIGINT, function() {
+            fwrite(STDERR, "received SIGINT scheduling shutdown...\n");
+            $this->stop();
+        });
         // kill
-        $this->loop->addSignal(SIGTERM, array($this, 'stop'));
+        $this->loop->addSignal(SIGTERM, function() {
+            fwrite(STDERR, "received SIGTERM scheduling shutdown...\n");
+            $this->stop();
+        });
         // logout
         $this->loop->addSignal(SIGHUP, function() {
             /** If we receive a HUP save the current running state. Don't exit
              * Force a run of the PHP GC and release caches.
              */
+            fwrite(STDERR, "SIGHUP received, clearing caches and saving non-dirty state\n");
             gc_collect_cycles();
             gc_mem_caches();
             $this->saveStateSync();
@@ -633,6 +640,7 @@ class Scheduler {
     public function stop()
     {
         $this->loop->stop();
+        fwrite(STDERR, "Event Loop stopped\n");
         $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
     }
 
