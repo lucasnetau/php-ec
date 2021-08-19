@@ -31,7 +31,6 @@ use function tempnam;
 use function json_encode;
 use function json_decode;
 use function memory_get_usage;
-use function memory_get_peak_usage;
 use function count;
 use function file_exists;
 use function file_put_contents;
@@ -71,9 +70,9 @@ class Scheduler {
     protected CorrelationEngine $engine;
 
     /**
-     * @var TimerInterface
+     * @var ?TimerInterface
      */
-    protected TimerInterface $nextTimer;
+    protected ?TimerInterface $nextTimer = null;
 
     /**
      * @var Process[] Process table for running input processes
@@ -439,11 +438,16 @@ class Scheduler {
     }
 
     /**
+     * Save the current system state in an async manner
      * @param FilesystemInterface $filesystem
      */
     public function saveStateAsync(FilesystemInterface $filesystem)
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
+        if (false === $filename) {
+            fwrite(STDERR, "Error creating temporary save state file\n");
+            return;
+        }
         $file = $filesystem->file($filename);
         $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
             ->then(function () use ($file) {
@@ -452,21 +456,26 @@ class Scheduler {
                         //Everything Good
                         $this->asyncSaveInProgress = false;
                     }, function (Exception $e) {
-                        $this->dirty = true; /** We didn't save state correctly so we mark the scheduler as dirty to ensure it is attempted again */
+                        $this->dirty = true; /** We didn't save state correctly, so we mark the scheduler as dirty to ensure it is attempted again */
                         $this->asyncSaveInProgress = false;
                         throw $e;
                     });
-            }, function (Exception $e) {
+            }, function (Exception $e) use($filename) {
+                unlink($filename);
                 throw $e;
             });
     }
 
     /**
-     *
+     * Save the current state in a synchronous manner
      */
     public function saveStateSync()
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
+        if (false === $filename) {
+            fwrite(STDERR, "Error creating temporary save state file\n");
+            return;
+        }
         file_put_contents($filename, json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         rename($filename, $this->saveFileName);
     }
@@ -481,6 +490,11 @@ class Scheduler {
          */
         if (null !== $this->nextTimer) {
             $this->loop->cancelTimer($this->nextTimer);
+        }
+
+        //Do not schedule any timeout if we are in the process of shutting down
+        if (true === $this->shuttingDown) {
+            return;
         }
 
         $timeouts = $this->engine->getTimeouts();
@@ -654,10 +668,14 @@ class Scheduler {
     }
 
     /**
-     * Initialise shutdown by stopping processes
+     * Initialise shutdown by stopping processes and timers
      */
     public function shutdown() {
         $this->shuttingDown = true;
+        if (null !== $this->nextTimer) {
+            $this->loop->cancelTimer($this->nextTimer);
+        }
+
         if (count($this->input_processes) > 0) {
             fwrite(STDERR, "Shutting down running input processes\n");
             foreach ($this->input_processes as $processKey => $process) {
