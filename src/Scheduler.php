@@ -76,12 +76,12 @@ class Scheduler {
     protected TimerInterface $nextTimer;
 
     /**
-     * @var array React\ChildProcess
+     * @var Process[] Process table for running input processes
      */
     protected array $input_processes = [];
 
     /**
-     * @var array Class list of rules
+     * @var string[] Class list of rules
      */
     protected array $rules = [];
 
@@ -96,7 +96,7 @@ class Scheduler {
     protected array $input_processes_checkpoints = [];
 
     /**
-     * @var array React\ChildProcess Process table to keep track of all action processes that are running.
+     * @var Process[] Process table to keep track of all action processes that are running.
      */
     protected array $runningActions = [];
 
@@ -182,6 +182,19 @@ class Scheduler {
     /** @var string RPC method name to get an action handler to run a request */
     const ACTION_RUN_METHOD = 'run';
 
+    /** @var int */
+    protected int $memoryLimit = 0;
+
+    /**
+     * @var bool Flag tracking if we have paused dispatching
+     */
+    protected bool $pausedOnMemoryPressure = false;
+
+    /**
+     * @var bool Flag to track if we are shutting down the engine
+     */
+    protected bool $shuttingDown = false;
+
     public function __construct(array $rules)
     {
         $this->rules = $rules;
@@ -236,19 +249,24 @@ class Scheduler {
         });
 
         $process->on('exit', function($code, $term) use($process) {
-            if ($term === null) {
-                fwrite(STDERR, "Input Process {$process->getCommand()} exited with code: $code" . PHP_EOL);
-            } else {
-                fwrite(STDERR, "Input Process {$process->getCommand()} exited on signal: $term" . PHP_EOL);
-            }
-            /** @TODO Implement restart of input processes */
             /** Remove process from table  */
+            $processKey = null;
             foreach($this->input_processes as $key => $input_process) {
                 if ($input_process === $process) {
                     unset($this->input_processes[$key]);
+                    $processKey = $key;
                     break;
                 }
             }
+
+            if ($term === null) {
+                fwrite(STDERR, "Input Process " . ($processKey ?? $process->getCommand()) . " exited with code: $code" . PHP_EOL);
+            } else {
+                fwrite(STDERR, "Input Process " . ($processKey ?? $process->getCommand()) . " exited on signal: $term" . PHP_EOL);
+            }
+
+            /** @TODO Implement restart of input processes if we are not shutting down ($this->shuttingDown) */
+
             /** We stop processing if there are no input processes available **/
             if (0 === count($this->input_processes)) {
                 fwrite(STDERR, "No more input processes running. Shutting down" . PHP_EOL);
@@ -563,8 +581,9 @@ class Scheduler {
             {
                 $env = array_merge([static::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
             }
-            $process = new Process($config['cmd'], $config['wd'], $env);
+            $process = new Process('exec ' . $config['cmd'], $config['wd'], $env);
             $this->setup_input_process($process, $id);
+            fwrite(STDERR, "Started input process $id\n");
             $this->input_processes[$id] = $process;
         }
 
@@ -612,12 +631,12 @@ class Scheduler {
         // ctrl+c
         $this->loop->addSignal(SIGINT, function() {
             fwrite(STDERR, "received SIGINT scheduling shutdown...\n");
-            $this->stop();
+            $this->shutdown();
         });
         // kill
         $this->loop->addSignal(SIGTERM, function() {
             fwrite(STDERR, "received SIGTERM scheduling shutdown...\n");
-            $this->stop();
+            $this->shutdown();
         });
         // logout
         $this->loop->addSignal(SIGHUP, function() {
@@ -635,10 +654,36 @@ class Scheduler {
     }
 
     /**
-     *
+     * Initialise shutdown by stopping processes
+     */
+    public function shutdown() {
+        $this->shuttingDown = true;
+        if (count($this->input_processes) > 0) {
+            fwrite(STDERR, "Shutting down running input processes\n");
+            foreach ($this->input_processes as $processKey => $process) {
+                if (false === $process->terminate(SIGTERM)) {
+                    fwrite(STDERR, "Unable to send SIGTERM to input process $processKey\n");
+                }
+                if ($process->isStopped()) {
+                    $process->terminate(SIGCONT); // If our input processes are paused by memory pressure then we need to send SIGCONT after SIGTERM as they are currently stopped
+                }
+            }
+        }
+        //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
+        $this->loop->addTimer(10.0, function() {
+            fwrite(STDERR, "shutdown timeout...\n");
+            $this->stop();
+        });
+    }
+
+    /**
+     * Stop the Loop and sync state to disk
      */
     public function stop()
     {
+        if (count($this->inflightActionCommands)) {
+            fwrite(STDERR, "Error: There were running action commands at the time of stopping\n");
+        }
         $this->loop->stop();
         fwrite(STDERR, "Event Loop stopped\n");
         $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
@@ -694,25 +739,22 @@ class Scheduler {
      */
     protected function checkMemoryPressure()
     {
-        static $limit = 0;
-        static $paused = false;
-        if ($limit === 0) {
-            $limit = $this->calculateMemoryLimit();
-        } elseif ($limit === -1) {
-            return; //We are configured for unlimited memory so we disable memory pressure checks
+        if ($this->memoryLimit === 0) {
+            $this->memoryLimit = $this->calculateMemoryLimit();
+        } elseif ($this->memoryLimit === -1) {
+            return; //We are configured for unlimited memory, so we disable memory pressure checks
         }
 
         $current_memory_usage = memory_get_usage();
-        $peak_memory_usage = memory_get_peak_usage(true);
 
-        $percent_used = (int)(($current_memory_usage / $limit) * 100);
+        $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
 
         /** Try releasing memory first and recalculate percentage used */
         if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK) {
             gc_collect_cycles();
             gc_mem_caches();
             $current_memory_usage = memory_get_usage();
-            $percent_used = (int)(($current_memory_usage / $limit) * 100);
+            $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
         }
 
         if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK ||
@@ -724,21 +766,21 @@ class Scheduler {
             {
                 if ($process->isRunning()) {
                     $process->terminate(SIGSTOP);
-                    fwrite(STDERR, "Stopped input process " . $process->getCommand() . PHP_EOL);
+                    fwrite(STDERR, "Paused input process " . $process->getCommand() . PHP_EOL);
                 }
             }
-            $paused = true;
+            $this->pausedOnMemoryPressure = true;
         }
         else
         {
-            if ($paused &&
+            if ($this->pausedOnMemoryPressure &&
                 $percent_used <= self::MEMORY_PRESSURE_LOW_WATERMARK &&
                 count($this->inflightActionCommands) < self::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
                 foreach ($this->input_processes as $process) {
                     $process->terminate(SIGCONT);
                     fwrite(STDERR, "Resuming input process " . $process->getCommand() . PHP_EOL);
                 }
-                $paused = false;
+                $this->pausedOnMemoryPressure = false;
             }
         }
     }
