@@ -215,7 +215,12 @@ class Scheduler {
      * @param int|string $id
      */
     public function setup_input_process(Process $process, $id) {
-        $process->start($this->loop);
+        try {
+            $process->start($this->loop);
+        } catch (RuntimeException $exception) {
+            fwrite(STDERR, "Failed to start input process $id, RuntimeException: " . $exception->getMessage() . PHP_EOL);
+            return;
+        }
         $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
 
         $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
@@ -243,25 +248,18 @@ class Scheduler {
             }
         });
 
-        $process->stderr->on('data', function($data) {
-            fwrite(STDERR, $data . "\n");
+        $process->stderr->on('data', function($data) use ($id) {
+            fwrite(STDERR, "$id message: " . trim($data) . PHP_EOL);
         });
 
-        $process->on('exit', function($code, $term) use($process) {
+        $process->on('exit', function($code, $term) use($id) {
             /** Remove process from table  */
-            $processKey = null;
-            foreach($this->input_processes as $key => $input_process) {
-                if ($input_process === $process) {
-                    unset($this->input_processes[$key]);
-                    $processKey = $key;
-                    break;
-                }
-            }
+            unset($this->input_processes[$id]);
 
             if ($term === null) {
-                fwrite(STDERR, "Input Process " . ($processKey ?? $process->getCommand()) . " exited with code: $code" . PHP_EOL);
+                fwrite(STDERR, "Input Process $id exited with code: $code" . PHP_EOL);
             } else {
-                fwrite(STDERR, "Input Process " . ($processKey ?? $process->getCommand()) . " exited on signal: $term" . PHP_EOL);
+                fwrite(STDERR, "Input Process $id exited on signal: $term" . PHP_EOL);
             }
 
             /** @TODO Implement restart of input processes if we are not shutting down ($this->shuttingDown) */
@@ -401,7 +399,7 @@ class Scheduler {
     public function setup_save_state()
     {
         /**
-         * Setup a time to save the state of the correlation engine every every saveStateSeconds
+         * Set up a time to save the state of the correlation engine every saveStateSeconds
          */
         $filesystem = Filesystem::create($this->loop);
         $this->saveHandler = $this->loop->addPeriodicTimer($this->saveStateSeconds, function() use ($filesystem) {
@@ -597,8 +595,13 @@ class Scheduler {
             }
             $process = new Process('exec ' . $config['cmd'], $config['wd'], $env);
             $this->setup_input_process($process, $id);
-            fwrite(STDERR, "Started input process $id\n");
-            $this->input_processes[$id] = $process;
+            if ($process->isRunning()) {
+                fwrite(STDERR, "Started input process $id" . PHP_EOL);
+                $this->input_processes[$id] = $process;
+            } else {
+                fwrite(STDERR, "An input process failed to start, exiting" . PHP_EOL);
+                exit(1);
+            }
         }
 
         /**
