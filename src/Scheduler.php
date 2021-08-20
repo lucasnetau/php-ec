@@ -223,6 +223,9 @@ class Scheduler {
         }
         $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
 
+        /**
+         * Handle RPC call from the input process
+         */
         $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
             switch ( $rpc->getMethod() ) {
                 case self::INPUT_ACTION_HANDLE:
@@ -248,10 +251,34 @@ class Scheduler {
             }
         });
 
+        /**
+         * Log any errors we receive on the processed STDERR, error is a fatal event and the stream will be closed, so we need to terminate the process since it can no longer communicate with us
+         */
+        $process_decoded_stdout->on('error', function(Exception $error) use ($id, $process) {
+            fwrite(STDERR, "$id error: " . $error->getMessage() . PHP_EOL);
+            $process->terminate(SIGTERM);
+        });
+
+        /**
+         * Input processes STDOUT has closed, if we are not in the process of shutting down then we need to terminate the process since it can no longer communicate with us
+         */
+        $process->stdout->on('close', function() use ($id, $process) {
+            if (!$this->shuttingDown && $process->isRunning()) {
+                fwrite(STDERR, "$id STDOUT closed unexpectedly, terminating process" . PHP_EOL);
+                $process->terminate(SIGTERM);
+            }
+        });
+
+        /**
+         * Log STDERR messages from input processes
+         */
         $process->stderr->on('data', function($data) use ($id) {
             fwrite(STDERR, "$id message: " . trim($data) . PHP_EOL);
         });
 
+        /**
+         * Handle process exiting
+         */
         $process->on('exit', function($code, $term) use($id) {
             /** Remove process from table  */
             unset($this->input_processes[$id]);
