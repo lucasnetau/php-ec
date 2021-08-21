@@ -141,7 +141,7 @@ class CorrelationEngine implements EventEmitterInterface {
          */
         if (false === $this->eventstream_live)
         {
-            $this->checkTimeouts($event->datetime);
+            $this->checkTimeouts($event->datetime->modify('-1 second'));
         }
 
         /**
@@ -465,7 +465,7 @@ class CorrelationEngine implements EventEmitterInterface {
         $triggered = 0;
         foreach ( $this->getTimeouts() as $timeout)
         {
-            if ($time > $timeout['timeout'])
+            if ($time >= $timeout['timeout'])
             {
                 /**
                  * @var IEventMatcher $matcher
