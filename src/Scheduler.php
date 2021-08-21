@@ -75,6 +75,11 @@ class Scheduler {
     protected ?TimerInterface $nextTimer = null;
 
     /**
+     * @var DateTimeImmutable
+     */
+    protected DateTimeImmutable $timerScheduledAt;
+
+    /**
      * @var Process[] Process table for running input processes
      */
     protected array $input_processes = [];
@@ -506,6 +511,7 @@ class Scheduler {
     }
 
     /**
+     * Scheduling timeouts is only supported when the engine is running in live mode. The Correlation engine will check timeouts for batch mode within the handle() function
      * @throws Exception
      */
     function scheduleNextTimeout()
@@ -515,6 +521,8 @@ class Scheduler {
          */
         if (null !== $this->nextTimer) {
             $this->loop->cancelTimer($this->nextTimer);
+            $this->nextTimer = null;
+            $this->dirty = true;
         }
 
         //Do not schedule any timeout if we are in the process of shutting down
@@ -528,11 +536,8 @@ class Scheduler {
             $now = new DateTimeImmutable();
             $difference = $nextTimeout['timeout']->getTimestamp() - $now->getTimestamp();
 
-            echo "Next timeout : {$nextTimeout['timeout']->format("c")}, Now: {$now->format("c")} \n";
-
             //If timeout has already past then manually check, this may block if we have fallen behind
             if ($difference <= 0) {
-                echo "Timeout already passed\n";
                 $this->engine->checkTimeouts(new DateTimeImmutable());
                 $this->scheduleNextTimeout();
             } else {
@@ -540,11 +545,11 @@ class Scheduler {
                     /** We only set a timer for the next one required, however we many have a few to process at the
                      * same time. Use the check timeouts function to process any and all timeouts.
                      */
-                    echo "Timeout passed\n";
                     $this->engine->checkTimeouts(new DateTimeImmutable());
                     $this->scheduleNextTimeout();
                 });
-                echo "Timer set for {$this->nextTimer->getInterval()} seconds\n";
+                $this->timerScheduledAt = new DateTimeImmutable();
+                $this->dirty = true;
             }
         }
     }
@@ -757,6 +762,7 @@ class Scheduler {
         $state = [];
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
         $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
+        $state['nextTimeout'] = $this->nextTimer === null ? 'none' : $this->timerScheduledAt->modify($this->nextTimer->getInterval() . ' seconds')->format('c');
         return $state;
     }
 
