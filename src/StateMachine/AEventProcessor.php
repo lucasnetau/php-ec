@@ -376,7 +376,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         $return['context'] = $this->context;
         if ($this->timeout instanceof DateTimeInterface)
         {
-            $return['timeout'] = $this->timeout->format('Y-m-d H:i:s');
+            $return['timeout'] = $this->timeout->format('c');
         }
 
         if (method_exists($this, 'serializeMetrics'))
