@@ -6,7 +6,7 @@
   "authors": [ { "name": "James Lucas", "email": "james@lucas.net.au" } ],
   "type": "library",
   "require": {
-    "php": "^7.4",
+    "php": "^7.4|^8.0",
     "ext-json": "*",
     "ext-pcntl": "*",
     "evenement/evenement": "^3.0.1",
