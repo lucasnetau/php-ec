@@ -293,9 +293,14 @@ class Scheduler {
             } else {
                 fwrite(STDERR, "Input Process $id exited on signal: $term" . PHP_EOL);
             }
-
-            /** @TODO Implement restart of input processes if we are not shutting down ($this->shuttingDown) */
-
+            if ($code === 255) { //255 = PHP Fatal exit code
+                fwrite(STDERR, "Input process $id exit was due to fatal PHP error" . PHP_EOL);
+            }
+            if ($code !== 0 && false === $this->shuttingDown) {
+                /**
+                 * @TODO Implement restart of input processes if process terminated with an error and we are not shutting down ($this->shuttingDown)
+                 */
+            }
             /** We stop processing if there are no input processes available **/
             if (0 === count($this->input_processes)) {
                 fwrite(STDERR, "No more input processes running. Shutting down" . PHP_EOL);
