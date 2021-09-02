@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use DateInterval;
 use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;
@@ -24,7 +25,6 @@ use RuntimeException;
 
 use function abs;
 use function array_key_exists;
-use function array_fill;
 use function get_class;
 use function in_array;
 use function spl_object_hash;
@@ -34,10 +34,8 @@ use function array_multisort;
 use function array_map;
 use function array_sum;
 use function array_slice;
-use function array_merge;
 use function serialize;
 use function unserialize;
-use function time;
 use function implode;
 
 /**
@@ -64,7 +62,7 @@ class CorrelationEngine implements EventEmitterInterface {
 
     protected bool $timeoutsSorted = false;
 
-    protected array $epsCounter;
+    protected Counter $epsCounter;
 
     /**
      * Counter length (in seconds) for recording events per second metrics.
@@ -92,7 +90,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 $this->initialEventLookup[$eventname][] = $matcher;
             }
         }
-        $this->resetEpsCounters();
+        $this->epsCounter = new Counter(new DateInterval('PT1H'), Counter::RESOLUTION_SECONDS);
     }
 
     /**
@@ -262,7 +260,7 @@ class CorrelationEngine implements EventEmitterInterface {
         $this->dirty = true;
 
         /** Increment event per second counters */
-        $this->incrEps();
+        $this->epsCounter->increment();
     }
 
     /**
@@ -621,89 +619,19 @@ class CorrelationEngine implements EventEmitterInterface {
     }
 
     /**
-     * Increment the event per second counters
-     */
-    public function incrEps()
-    {
-        $time = time();
-        $index = $time % self::EPS_COUNTER_LENGTH;
-
-        $this->flushOldEps();
-        $this->epsCounter[$index]++;
-
-        $this->lastEventReal = $time;
-    }
-
-    /**
-     * Shifts along the Events Per Second counters as time progresses
-     */
-    public function flushOldEps()
-    {
-        $time = time();
-        $index = $time % self::EPS_COUNTER_LENGTH;
-
-        /** Don't flush if we are tracking the current second */
-        if (null === $this->lastEventReal || $time == $this->lastEventReal)
-        {
-            return;
-        }
-
-        /** Check if we have not processed an event for the max measurement period and reset all counters */
-        if (($time - $this->lastEventReal) >= self::EPS_COUNTER_LENGTH) {
-            $this->resetEpsCounters();
-        }
-        else
-        {
-            /** We are a new time period */
-            $lastIndex = $this->lastEventReal % self::EPS_COUNTER_LENGTH;
-            if ($index >= $lastIndex)
-            {
-                for($i = $lastIndex+1; $i <= $index; $i++)
-                {
-                    $this->epsCounter[$i] = 0;
-                }
-            }
-            else
-            {
-                for($i = 0; $i <= $index; $i++)
-                {
-                    $this->epsCounter[$i] = 0;
-                }
-                for($i = $lastIndex+1; $i < self::EPS_COUNTER_LENGTH; $i++)
-                {
-                    $this->epsCounter[$i] = 0;
-                }
-            }
-        }
-    }
-
-    /**
-     * Clear the Event Per Second counters
-     */
-    protected function resetEpsCounters() {
-        $this->epsCounter = array_fill(0,self::EPS_COUNTER_LENGTH, 0);
-    }
-
-    /**
      * Calculate the Load metrics for the engine
-     * @return array{lastEvent: int, hour: int, fifteen: int, minute: int, counter: string}
+     * @return array{lastEvent: string, hour: float, fifteen: float, minute: float, counter: string}
      */
     public function calcLoad() : array
     {
-        $time = time();
-        $index = $time % self::EPS_COUNTER_LENGTH; /* seconds in an hour. Calculating over an hour */
-
-        $this->flushOldEps();
-
-        /** Shift the counter so that the current time modulus is the last item in the array */
-        $shiftedArray = array_merge(array_slice($this->epsCounter, $index+1), array_slice($this->epsCounter, 0, $index+1));
+        $counter = $this->epsCounter->getCounter();
 
         return [
-            'lastEvent' => $this->lastEventReal,
-            'hour' => array_sum($this->epsCounter),
-            'fifteen' => array_sum(array_slice($shiftedArray, -900)),
-            'minute' => array_sum(array_slice($shiftedArray, -60)),
-            'counter' => implode(",", $shiftedArray),
+            'lastEvent' => DateTimeImmutable::createFromFormat('U', (string)$this->epsCounter->getLastEventTime())->format('c'),
+            'hour' => round(array_sum($counter) / 3600, 2),
+            'fifteen' => round(array_sum(array_slice($counter, -900)) / 900, 2),
+            'minute' => round(array_sum(array_slice($counter, -60)) / 60, 2),
+            'counter' => implode(",", $counter),
         ];
     }
 }
