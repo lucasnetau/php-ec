@@ -13,7 +13,7 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
 use Exception;
-use React\EventLoop\Factory;
+use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 use React\ChildProcess\Process;
 use React\EventLoop\TimerInterface;
@@ -615,7 +615,7 @@ class Scheduler {
             fwrite(STDERR, "Opcache is not enabled. This will reduce performance and increase memory usage" . PHP_EOL);
         }
 
-        $this->loop = Factory::create();
+        $this->loop = Loop::get();
         fwrite(STDERR, "Using event loop implementation: " . get_class($this->loop) . PHP_EOL);
 
         /** Restore the state of the scheduler and engine */
