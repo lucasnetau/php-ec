@@ -26,9 +26,11 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')
         ini_set('implicit_flush', '1');
         if (PHP_VERSION_ID < 80000) {
             //PHP 7.4 and below used int as the flag
+            /** @noinspection PhpStrictTypeCheckingInspection */
             ob_implicit_flush(1);
         } else {
             //PHP8 and above now expect a boolean value
+            /** @noinspection PhpStrictTypeCheckingInspection */
             ob_implicit_flush(true);
         }
         while (ob_get_level() > 0) {
