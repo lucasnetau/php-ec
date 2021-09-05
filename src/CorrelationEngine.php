@@ -90,7 +90,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 $this->initialEventLookup[$eventname][] = $matcher;
             }
         }
-        $this->epsCounter = new Counter(new DateInterval('PT1H'), Counter::RESOLUTION_SECONDS);
+        $this->epsCounter = new Counter(new DateInterval('PT' . static::EPS_COUNTER_LENGTH . 'S'), Counter::RESOLUTION_SECONDS);
     }
 
     /**
