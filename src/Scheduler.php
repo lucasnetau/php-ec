@@ -822,7 +822,7 @@ class Scheduler {
         $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
 
         /** Try releasing memory first and recalculate percentage used */
-        if ($percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK) {
+        if ($this->pausedOnMemoryPressure || $percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK) {
             /** Running this every check cycle negatively impacts the scheduler's performance,
              *  however since we are paused (or going to pause) at this stage, and are awaiting the external action processes to complete the actual impact will be minimal
              */
