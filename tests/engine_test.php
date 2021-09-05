@@ -7,7 +7,6 @@ use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRule;
 use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRuleContinuously;
 
 include __DIR__ . "/../vendor/autoload.php";
-include __DIR__ . "/Rules/MatchAnyRule.php";
 
 $engine = new CorrelationEngine([
     MatchAnyRule::class,
