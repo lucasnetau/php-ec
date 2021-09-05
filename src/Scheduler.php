@@ -189,14 +189,19 @@ class Scheduler {
     /** @var int */
     protected int $memoryLimit = 0;
 
-    /**
-     * @var bool Flag tracking if we have paused dispatching
-     */
+    /** @var int */
+    protected int $currentMemoryPercentUsed = 0;
+
+    /** @var bool Flag tracking if we have paused dispatching */
     protected bool $pausedOnMemoryPressure = false;
 
-    /**
-     * @var bool Flag to track if we are shutting down the engine
-     */
+    /** @var TimerInterface|null Timer used to ensure that we don't get stuck doing nothing if all actions complete but memory pressure stays above the high watermark */
+    protected ?TimerInterface $pausedOnMemoryPressureTimeout = null;
+
+    /** @var int Counter of how many times we have hit the memory HIGH WATERMARK during execution, a high number suggested that memory resources or limit should be increased */
+    protected int $pausedOnMemoryPressureCount = 0;
+
+    /** @var bool Flag to track if we are shutting down the engine */
     protected bool $shuttingDown = false;
 
     public function __construct(array $rules)
@@ -679,6 +684,8 @@ class Scheduler {
         $this->setup_save_state();
 
         /** Monitor memory usage */
+        $this->memoryLimit = $this->calculateMemoryLimit();
+        fwrite(STDERR, "Memory limit set to $this->memoryLimit" . PHP_EOL);
         $this->loop->addPeriodicTimer(2, function() { $this->checkMemoryPressure(); });
 
         /** Gracefully shutdown */
@@ -768,6 +775,9 @@ class Scheduler {
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
         $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
         $state['nextTimeout'] = $this->nextTimer === null ? 'none' : $this->timerScheduledAt->modify($this->nextTimer->getInterval() . ' seconds')->format('c');
+        $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
+        $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
+        $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
         return $state;
     }
 
@@ -794,7 +804,10 @@ class Scheduler {
     }
 
     /**
-     * Compare our memory usage against the limit set for the PHP process. Pause input processes to allow inflight actions to reduce memory usage
+     * Memory usage can increase rapidly with Rules that are buffering data, and a large number of inflight Action Commands (specifically the state table tracking their execution, or failure).
+     * Compare our memory usage against the limit set for the PHP process and a HIGH watermark,
+     *  once we go above the high watermark or the number of inflight actions exceeds the running actions watermark,
+     *  we pause input processes to allow inflight actions to complete and reduce memory usage.
      */
     protected function checkMemoryPressure()
     {
@@ -809,35 +822,59 @@ class Scheduler {
         $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
 
         /** Try releasing memory first and recalculate percentage used */
-        if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK) {
+        if ($percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK) {
+            /** Running this every check cycle negatively impacts the scheduler's performance,
+             *  however since we are paused (or going to pause) at this stage, and are awaiting the external action processes to complete the actual impact will be minimal
+             */
             gc_collect_cycles();
             gc_mem_caches();
             $current_memory_usage = memory_get_usage();
             $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
         }
 
-        if ($percent_used >= self::MEMORY_PRESSURE_HIGH_WATERMARK ||
-            count($this->inflightActionCommands) > self::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
-        {
-            fwrite(STDERR, "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes" . PHP_EOL);
+        $this->currentMemoryPercentUsed = $percent_used;
 
-            foreach($this->input_processes as $process)
+        if (false === $this->pausedOnMemoryPressure &&
+                ($percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK ||
+                count($this->inflightActionCommands) > static::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
+        )
+        {
+            fwrite(STDERR,
+                "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes" . PHP_EOL);
+
+            foreach($this->input_processes as $processId => $process)
             {
                 if ($process->isRunning()) {
                     $process->terminate(SIGSTOP);
-                    fwrite(STDERR, "Paused input process " . $process->getCommand() . PHP_EOL);
+                    fwrite(STDERR, "Paused input process $processId" . PHP_EOL);
                 }
             }
             $this->pausedOnMemoryPressure = true;
+            ++$this->pausedOnMemoryPressureCount;
+
+            /** @TODO take into account delaying shutdown if we still have some outstanding actions and memory usage is dropping */
+            $this->pausedOnMemoryPressureTimeout = $this->loop->addTimer(300, function() {
+                if ($this->pausedOnMemoryPressure) {
+                    fwrite(STDERR, "Timeout! Input processes are still paused, shutting down\n");
+                    $this->shutdown();
+                }
+            });
         }
         else
         {
             if ($this->pausedOnMemoryPressure &&
-                $percent_used <= self::MEMORY_PRESSURE_LOW_WATERMARK &&
-                count($this->inflightActionCommands) < self::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
-                foreach ($this->input_processes as $process) {
+                $percent_used <= static::MEMORY_PRESSURE_LOW_WATERMARK &&
+                count($this->inflightActionCommands) < static::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
+
+                //Cancel the memory pressure timout
+                if ($this->pausedOnMemoryPressureTimeout !== null) {
+                    $this->loop->cancelTimer($this->pausedOnMemoryPressureTimeout);
+                    $this->pausedOnMemoryPressureTimeout = null;
+                }
+                //Resume input
+                foreach ($this->input_processes as $processId => $process) {
                     $process->terminate(SIGCONT);
-                    fwrite(STDERR, "Resuming input process " . $process->getCommand() . PHP_EOL);
+                    fwrite(STDERR, "Resuming input process $processId" . PHP_EOL);
                 }
                 $this->pausedOnMemoryPressure = false;
             }
