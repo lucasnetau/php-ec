@@ -41,7 +41,6 @@ use function gc_collect_cycles;
 use function gc_mem_caches;
 use function array_merge;
 use function mt_rand;
-use function error_log;
 use function ini_get;
 use function preg_match;
 use function strtoupper;
@@ -794,10 +793,10 @@ class Scheduler {
         /** @TODO - Replay any errored actions, then replay any inflight actions recorded. If these fail then we should thrown an error and exit. Ensure no dataloss */
         if (count($state['actions']['errored']) > 0)
         {
-            error_log("Failed actions detected from previous execution");
+            fwrite(STDERR, "Failed actions detected from previous execution");
             if (count($state['actions']['errored']) > 50)
             {
-                error_log("Large number of failed actions. Memory consumption for state table may be large.");
+                fwrite(STDERR,"Large number of failed actions. Memory consumption for state table may be large.");
             }
         }
         if (true === static::PRESERVE_FAILED_EVENTS_ONLOAD) {
