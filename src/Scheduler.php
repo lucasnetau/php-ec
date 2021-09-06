@@ -565,23 +565,26 @@ class Scheduler {
     }
 
     /**
-     *
+     * Boot up from a saved state file
      */
     protected function restoreState()
     {
         /** Load State from save file */
         $savedState = $this->loadStateFromFile();
-        $restored = $savedState !== false;
-        if (false !== $savedState) {
-            $this->setState($savedState['scheduler']);
-            unset($savedState['scheduler']);
-        }
+        $restoring = $savedState !== false;
 
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
-        if (false !== $savedState) {
-            $this->engine->setState($savedState['engine']);
-            unset($savedState['engine']);
+
+        if ($restoring) {
+            try {
+                $this->setState($savedState['scheduler']);
+                $this->engine->setState($savedState['engine']);
+            } catch (Exception $ex) {
+                fwrite(STDERR, "A fatal exception was thrown while loading previous saved state. " . $ex->getMessage() . PHP_EOL);
+                exit(-1);
+            }
+            fwrite(STDERR, "Successfully loaded from saved state" . PHP_EOL);
         }
         unset($savedState);
 
@@ -592,8 +595,8 @@ class Scheduler {
         /** Inject some synthetic events in to the engine to flag that the engine is starting for the first time or restoring
          * Rules can handle these events for initialisation purposes (handy for setting up rules that detect when an event is missing)
          */
-        $this->loop->futureTick(function() use ($restored) {
-            $event = $restored ? new Event(['event' => static::CONTROL_MSG_RESTORED_STATE]) : new Event(['event' => static::CONTROL_MSG_NEW_STATE]);
+        $this->loop->futureTick(function() use ($restoring) {
+            $event = $restoring ? new Event(['event' => static::CONTROL_MSG_RESTORED_STATE]) : new Event(['event' => static::CONTROL_MSG_NEW_STATE]);
 
             /**
              * Pass the event to the engine to be handled
