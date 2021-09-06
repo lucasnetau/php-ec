@@ -571,6 +571,7 @@ class Scheduler {
     {
         /** Load State from save file */
         $savedState = $this->loadStateFromFile();
+        $restored = $savedState !== false;
         if (false !== $savedState) {
             $this->setState($savedState['scheduler']);
             unset($savedState['scheduler']);
@@ -582,6 +583,7 @@ class Scheduler {
             $this->engine->setState($savedState['engine']);
             unset($savedState['engine']);
         }
+        unset($savedState);
 
         /** Force a run of the PHP GC and release caches. This helps clearing out memory consumed by restoring state from a large json file */
         gc_collect_cycles();
@@ -590,12 +592,9 @@ class Scheduler {
         /** Inject some synthetic events in to the engine to flag that the engine is starting for the first time or restoring
          * Rules can handle these events for initialisation purposes (handy for setting up rules that detect when an event is missing)
          */
-        $this->loop->futureTick(function() use ($savedState) {
-            if (false === $savedState) {
-                $event = new Event(['event' => static::CONTROL_MSG_NEW_STATE]);
-            } else {
-                $event = new Event(['event' => static::CONTROL_MSG_RESTORED_STATE]);
-            }
+        $this->loop->futureTick(function() use ($restored) {
+            $event = $restored ? new Event(['event' => static::CONTROL_MSG_RESTORED_STATE]) : new Event(['event' => static::CONTROL_MSG_NEW_STATE]);
+
             /**
              * Pass the event to the engine to be handled
              */
@@ -685,7 +684,7 @@ class Scheduler {
 
         /** Monitor memory usage */
         $this->memoryLimit = $this->calculateMemoryLimit();
-        fwrite(STDERR, "Memory limit set to $this->memoryLimit" . PHP_EOL);
+        fwrite(STDERR, "Memory limit set to $this->memoryLimit Bytes" . PHP_EOL);
         $this->loop->addPeriodicTimer(2, function() { $this->checkMemoryPressure(); });
 
         /** Gracefully shutdown */
