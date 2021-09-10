@@ -44,6 +44,8 @@ use function mt_rand;
 use function ini_get;
 use function preg_match;
 use function strtoupper;
+use function trim;
+use function unlink;
 
 use const STDERR;
 use const PHP_EOL;
@@ -456,6 +458,14 @@ class Scheduler {
                 $this->saveStateAsync($filesystem);
             }
         });
+
+        /** Setup an hourly time to save state (or skip if we are already saving state when this timer fires) */
+        $this->loop->addPeriodicTimer(3600, function() use ($filesystem) {
+            if (false === $this->asyncSaveInProgress) {
+                $this->asyncSaveInProgress = true;
+                $this->saveStateAsync($filesystem);
+            }
+        });
     }
 
     /**
@@ -488,21 +498,19 @@ class Scheduler {
             return;
         }
         $file = $filesystem->file($filename);
-        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
-            ->then(function () use ($file) {
-                $file->rename($this->saveFileName)
-                    ->then(function (\React\Filesystem\Node\FileInterface $newfile) {
-                        //Everything Good
-                        $this->asyncSaveInProgress = false;
-                    }, function (Exception $e) {
-                        $this->dirty = true; /** We didn't save state correctly, so we mark the scheduler as dirty to ensure it is attempted again */
-                        $this->asyncSaveInProgress = false;
-                        throw $e;
-                    });
-            }, function (Exception $e) use($filename) {
-                unlink($filename);
-                throw $e;
+        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))->then(function () use ($file) {
+            $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) {
+                //Everything Good
+                $this->asyncSaveInProgress = false;
             });
+        }, function (Exception $ex) use($filename) {
+            $this->dirty = true; /** We didn't save state correctly, so we mark the scheduler as dirty to ensure it is attempted again */
+            $this->asyncSaveInProgress = false;
+            if (file_exists($filename)) {
+                unlink($filename);
+            }
+            fwrite(STDERR, "Save state async failed. " . $ex->getMessage() . "\n");
+        });
     }
 
     /**
