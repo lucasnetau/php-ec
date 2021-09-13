@@ -13,6 +13,10 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
 use Exception;
+use Psr\Log\LoggerAwareInterface;
+use Psr\Log\LoggerAwareTrait;
+use Psr\Log\LogLevel;
+use Psr\Log\NullLogger;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 use React\ChildProcess\Process;
@@ -26,7 +30,8 @@ use React\Filesystem\FilesystemInterface;
 use RuntimeException;
 
 use function array_key_first;
-use function fwrite;
+use function gettype;
+use function is_array;
 use function tempnam;
 use function json_encode;
 use function json_decode;
@@ -47,8 +52,6 @@ use function strtoupper;
 use function trim;
 use function unlink;
 
-use const STDERR;
-use const PHP_EOL;
 use const SIGINT;
 use const SIGTERM;
 use const SIGHUP;
@@ -57,7 +60,10 @@ use const SIGHUP;
  * Class Scheduler
  * @package EdgeTelemetrics\EventCorrelation
  */
-class Scheduler {
+class Scheduler implements LoggerAwareInterface {
+    /** PSR3 logger provides $this->logger */
+    use LoggerAwareTrait;
+
     const CHECKPOINT_VARNAME = 'PHPEC_CHECKPOINT';
 
     /**
@@ -208,6 +214,7 @@ class Scheduler {
     public function __construct(array $rules)
     {
         $this->rules = $rules;
+        $this->logger = new NullLogger();
     }
 
     /**
@@ -229,7 +236,7 @@ class Scheduler {
         try {
             $process->start($this->loop);
         } catch (RuntimeException $exception) {
-            fwrite(STDERR, "Failed to start input process $id, RuntimeException: " . $exception->getMessage() . PHP_EOL);
+            $this->logger->critical("Failed to start input process {id}", ['id' => $id, 'exception' => $exception,]);
             return;
         }
         $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
@@ -240,6 +247,11 @@ class Scheduler {
         $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
             switch ( $rpc->getMethod() ) {
                 case self::INPUT_ACTION_HANDLE:
+                    $eventData = $rpc->getParam('event');
+                    if (!is_array($eventData)) {
+                        $this->logger->critical("Input process did not give us an event array to handle. Received type: {type}, value: {value} ", ['type' => gettype($eventData), 'value' => json_encode($eventData),]);
+                        return;
+                    }
                     $event = new Event($rpc->getParam('event'));
                     /**
                      * Pass the event to the engine to be handled
@@ -266,7 +278,7 @@ class Scheduler {
          * Log any errors we receive on the processed STDERR, error is a fatal event and the stream will be closed, so we need to terminate the process since it can no longer communicate with us
          */
         $process_decoded_stdout->on('error', function(Exception $error) use ($id, $process) {
-            fwrite(STDERR, "$id error: " . $error->getMessage() . PHP_EOL);
+            $this->logger->error("{id}", ['id'=> $id, 'exception' => $error,]);
             $process->terminate(SIGTERM);
         });
 
@@ -275,7 +287,7 @@ class Scheduler {
          */
         $process->stdout->on('close', function() use ($id, $process) {
             if (!$this->shuttingDown && $process->isRunning()) {
-                fwrite(STDERR, "$id STDOUT closed unexpectedly, terminating process" . PHP_EOL);
+                $this->logger->critical("{id} STDOUT closed unexpectedly, terminating process", ['id' => $id,]);
                 $process->terminate(SIGTERM);
             }
         });
@@ -284,7 +296,7 @@ class Scheduler {
          * Log STDERR messages from input processes
          */
         $process->stderr->on('data', function($data) use ($id) {
-            fwrite(STDERR, "$id message: " . trim($data) . PHP_EOL);
+            $this->logger->error("$id message: " . trim($data));
         });
 
         /**
@@ -295,12 +307,13 @@ class Scheduler {
             unset($this->input_processes[$id]);
 
             if ($term === null) {
-                fwrite(STDERR, "Input Process $id exited with code: $code" . PHP_EOL);
+                $level = ($code === 0) ? LogLevel::INFO : LogLevel::ERROR;
+                $this->logger->log($level,"Input Process {id} exited with code: {code}", ['id' => $id, 'code' => $code,]);
             } else {
-                fwrite(STDERR, "Input Process $id exited on signal: $term" . PHP_EOL);
+                $this->logger->info("Input Process $id exited on signal: $term");
             }
             if ($code === 255) { //255 = PHP Fatal exit code
-                fwrite(STDERR, "Input process $id exit was due to fatal PHP error" . PHP_EOL);
+                $this->logger->critical("Input process $id exit was due to fatal PHP error");
             }
             if ($code !== 0 && false === $this->shuttingDown) {
                 /**
@@ -309,7 +322,7 @@ class Scheduler {
             }
             /** We stop processing if there are no input processes available **/
             if (0 === count($this->input_processes)) {
-                fwrite(STDERR, "No more input processes running. Shutting down" . PHP_EOL);
+                $this->logger->info("No more input processes running. Shutting down");
                 $this->stop();
             }
         });
@@ -351,7 +364,7 @@ class Scheduler {
 
             $process->stderr->on('data', function ($data) {
                 //@TODO handle any error messages
-                fwrite(STDERR, $data . "\n");
+                $this->logger->error($data);
             });
 
             $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
@@ -374,7 +387,7 @@ class Scheduler {
                     unset($this->inflightActionCommands[$response->getId()]);
 
                     /** @TODO We should be placing these errors into an external system to be logged and possibly processed */
-                    fwrite(STDERR, $response->getError()->getMessage() . " : " . json_encode($response->getError()->getData()) . PHP_EOL);
+                    $this->logger->error($response->getError()->getMessage() . " : " . json_encode($response->getError()->getData()));
                 }
                 /** Release memory used by the inflight action table */
                 if (count($this->inflightActionCommands) === 0)
@@ -387,12 +400,13 @@ class Scheduler {
             $process->on('exit', function ($code, $term) use ($actionName, $process) {
                 /** Action has terminated. If it successfully completed then it will have sent an ack on stdout first before exit */
                 if ($term === null) {
-                    fwrite(STDERR, "Action $actionName exited with code: $code" . PHP_EOL);
+                    $level = ($code === 0) ? LogLevel::INFO : LogLevel::ERROR;
+                    $this->logger->log($level, "Action {actionName} exited with code: {code}", ['actionName' => $actionName, 'code' => $code]);
                 } else {
-                    fwrite(STDERR, "Action $actionName exited on signal: $term" . PHP_EOL);
+                    $this->logger->info("Action $actionName exited on signal: $term");
                 }
                 if ($code === 255) { //255 = PHP Fatal exit code
-                    fwrite(STDERR, "Action $actionName exit was due to fatal PHP error" . PHP_EOL);
+                    $this->logger->critical("Action $actionName exit was due to fatal PHP error");
                 }
                 if ($code !== 0)
                 {
@@ -494,7 +508,7 @@ class Scheduler {
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         if (false === $filename) {
-            fwrite(STDERR, "Error creating temporary save state file\n");
+            $this->logger->critical("Error creating temporary save state file, check filesystem");
             return;
         }
         $file = $filesystem->file($filename);
@@ -509,7 +523,7 @@ class Scheduler {
             if (file_exists($filename)) {
                 unlink($filename);
             }
-            fwrite(STDERR, "Save state async failed. " . $ex->getMessage() . "\n");
+            $this->logger->critical("Save state async failed.", ['exception' => $ex]);
         });
     }
 
@@ -520,7 +534,7 @@ class Scheduler {
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         if (false === $filename) {
-            fwrite(STDERR, "Error creating temporary save state file\n");
+            $this->logger->critical("Error creating temporary save state file, check filesystem");
             return;
         }
         file_put_contents($filename, json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -588,10 +602,10 @@ class Scheduler {
                 $this->setState($savedState['scheduler']);
                 $this->engine->setState($savedState['engine']);
             } catch (Exception $ex) {
-                fwrite(STDERR, "A fatal exception was thrown while loading previous saved state. " . $ex->getMessage() . PHP_EOL);
+                $this->logger->emergency("A fatal exception was thrown while loading previous saved state.", ['exception' => $ex]);
                 exit(-1);
             }
-            fwrite(STDERR, "Successfully loaded from saved state" . PHP_EOL);
+            $this->logger->debug("Successfully loaded from saved state");
         }
         unset($savedState);
 
@@ -626,11 +640,11 @@ class Scheduler {
     {
         if (!$this->isOpcacheEnabled())
         {
-            fwrite(STDERR, "Opcache is not enabled. This will reduce performance and increase memory usage" . PHP_EOL);
+            $this->logger->warning("Opcache is not enabled. This will reduce performance and increase memory usage");
         }
 
         $this->loop = Loop::get();
-        fwrite(STDERR, "Using event loop implementation: " . get_class($this->loop) . PHP_EOL);
+        $this->logger->debug("Using event loop implementation: {class}", ['class' => get_class($this->loop)]);
 
         /** Restore the state of the scheduler and engine */
         $this->restoreState();
@@ -647,10 +661,10 @@ class Scheduler {
             $process = new Process('exec ' . $config['cmd'], $config['wd'], $env);
             $this->setup_input_process($process, $id);
             if ($process->isRunning()) {
-                fwrite(STDERR, "Started input process $id" . PHP_EOL);
+                $this->logger->info("Started input process $id");
                 $this->input_processes[$id] = $process;
             } else {
-                fwrite(STDERR, "An input process failed to start, exiting" . PHP_EOL);
+                $this->logger->emergency("An input process failed to start, exiting");
                 exit(1);
             }
         }
@@ -685,7 +699,7 @@ class Scheduler {
             }
             else
             {
-                echo "Unknown Action: " . json_encode($action) . PHP_EOL;
+                $this->logger->error("Unable to start unknown action " . json_encode($action));
             }
         });
 
@@ -694,18 +708,18 @@ class Scheduler {
 
         /** Monitor memory usage */
         $this->memoryLimit = $this->calculateMemoryLimit();
-        fwrite(STDERR, "Memory limit set to $this->memoryLimit Bytes" . PHP_EOL);
+        $this->logger->debug("Memory limit set to {bytes} Bytes", ['bytes' => $this->memoryLimit,]);
         $this->loop->addPeriodicTimer(2, function() { $this->checkMemoryPressure(); });
 
         /** Gracefully shutdown */
         // ctrl+c
         $this->loop->addSignal(SIGINT, function() {
-            fwrite(STDERR, "received SIGINT scheduling shutdown...\n");
+            $this->logger->debug( "received SIGINT scheduling shutdown...");
             $this->shutdown();
         });
         // kill
         $this->loop->addSignal(SIGTERM, function() {
-            fwrite(STDERR, "received SIGTERM scheduling shutdown...\n");
+            $this->logger->debug("received SIGTERM scheduling shutdown...");
             $this->shutdown();
         });
         // logout
@@ -713,7 +727,7 @@ class Scheduler {
             /** If we receive a HUP save the current running state. Don't exit
              * Force a run of the PHP GC and release caches.
              */
-            fwrite(STDERR, "SIGHUP received, clearing caches and saving non-dirty state\n");
+            $this->logger->debug("SIGHUP received, clearing caches and saving non-dirty state");
             gc_collect_cycles();
             gc_mem_caches();
             $this->saveStateSync();
@@ -733,10 +747,10 @@ class Scheduler {
         }
 
         if (count($this->input_processes) > 0) {
-            fwrite(STDERR, "Shutting down running input processes\n");
+            $this->logger->info( "Shutting down running input processes\n");
             foreach ($this->input_processes as $processKey => $process) {
                 if (false === $process->terminate(SIGTERM)) {
-                    fwrite(STDERR, "Unable to send SIGTERM to input process $processKey\n");
+                    $this->logger->error( "Unable to send SIGTERM to input process $processKey\n");
                 }
                 if ($process->isStopped()) {
                     $process->terminate(SIGCONT); // If our input processes are paused by memory pressure then we need to send SIGCONT after SIGTERM as they are currently stopped
@@ -745,7 +759,7 @@ class Scheduler {
         }
         //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
         $this->loop->addTimer(10.0, function() {
-            fwrite(STDERR, "shutdown timeout...\n");
+            $this->logger->warning( "Input processes did not shutdown within the timeout delay...");
             $this->stop();
         });
     }
@@ -756,10 +770,10 @@ class Scheduler {
     public function stop()
     {
         if (count($this->inflightActionCommands)) {
-            fwrite(STDERR, "Error: There were running action commands at the time of stopping\n");
+            $this->logger->error( "There were running action commands at the time of stopping");
         }
         $this->loop->stop();
-        fwrite(STDERR, "Event Loop stopped\n");
+        $this->logger->debug( "Event Loop stopped");
         $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
     }
 
@@ -801,10 +815,10 @@ class Scheduler {
         /** @TODO - Replay any errored actions, then replay any inflight actions recorded. If these fail then we should thrown an error and exit. Ensure no dataloss */
         if (count($state['actions']['errored']) > 0)
         {
-            fwrite(STDERR, "Failed actions detected from previous execution");
+            $this->logger->warning("Failed actions detected from previous execution");
             if (count($state['actions']['errored']) > 50)
             {
-                fwrite(STDERR,"Large number of failed actions. Memory consumption for state table may be large.");
+                $this->logger->warning("Large number of failed actions. Memory consumption for state table may be large.");
             }
         }
         if (true === static::PRESERVE_FAILED_EVENTS_ONLOAD) {
@@ -848,14 +862,14 @@ class Scheduler {
                 count($this->inflightActionCommands) > static::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
         )
         {
-            fwrite(STDERR,
-                "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes" . PHP_EOL);
+            $this->logger->warning(
+                "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes");
 
             foreach($this->input_processes as $processId => $process)
             {
                 if ($process->isRunning()) {
                     $process->terminate(SIGSTOP);
-                    fwrite(STDERR, "Paused input process $processId" . PHP_EOL);
+                    $this->logger->debug("Paused input process {id}", ['id' => $processId,]);
                 }
             }
             $this->pausedOnMemoryPressure = true;
@@ -864,7 +878,7 @@ class Scheduler {
             /** @TODO take into account delaying shutdown if we still have some outstanding actions and memory usage is dropping */
             $this->pausedOnMemoryPressureTimeout = $this->loop->addTimer(300, function() {
                 if ($this->pausedOnMemoryPressure) {
-                    fwrite(STDERR, "Timeout! Input processes are still paused, shutting down\n");
+                    $this->logger->critical("Timeout! Input processes are still paused, shutting down");
                     $this->shutdown();
                 }
             });
@@ -883,7 +897,7 @@ class Scheduler {
                 //Resume input
                 foreach ($this->input_processes as $processId => $process) {
                     $process->terminate(SIGCONT);
-                    fwrite(STDERR, "Resuming input process $processId" . PHP_EOL);
+                    $this->logger->debug( "Resuming input process {id}", ['id' => $processId,]);
                 }
                 $this->pausedOnMemoryPressure = false;
             }
