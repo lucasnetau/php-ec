@@ -215,6 +215,8 @@ class Scheduler implements LoggerAwareInterface {
     {
         $this->rules = $rules;
         $this->logger = new NullLogger();
+        /** Initialise the Correlation Engine */
+        $this->engine = new CorrelationEngine($this->rules);
     }
 
     /**
@@ -593,9 +595,6 @@ class Scheduler implements LoggerAwareInterface {
         /** Load State from save file */
         $savedState = $this->loadStateFromFile();
         $restoring = $savedState !== false;
-
-        /** Initialise the Correlation Engine */
-        $this->engine = new CorrelationEngine($this->rules);
 
         if ($restoring) {
             try {
