@@ -556,8 +556,8 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->critical("Error creating temporary save state file, check filesystem");
             return;
         }
-        $state = json_encode($this->buildState());
-        if (!(@file_put_contents($filename, $state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) === strlen($state) && rename($filename, $this->saveFileName))) {
+        $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if (!(@file_put_contents($filename, $state) === strlen($state) && rename($filename, $this->saveFileName))) {
             $this->logger->critical("Save state sync failed. {lasterror}", ['lasterror' => json_encode(error_get_last())]);
         }
     }
@@ -788,7 +788,7 @@ class Scheduler implements LoggerAwareInterface {
     }
 
     /**
-     * Input processes are stopped. Shutdown any running actions (some may need to be flused)
+     * Input processes are stopped. Shutdown any running actions (some may need to be flushed)
      */
     public function stop()
     {
