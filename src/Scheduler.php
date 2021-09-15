@@ -30,6 +30,7 @@ use React\Filesystem\FilesystemInterface;
 use RuntimeException;
 
 use function array_key_first;
+use function error_get_last;
 use function gettype;
 use function is_array;
 use function tempnam;
@@ -166,6 +167,11 @@ class Scheduler implements LoggerAwareInterface {
      */
     const CONTROL_MSG_RESTORED_STATE = 'PHP-EC:Engine:Restored';
 
+    /**
+     * Event type when we stop the engine.
+     */
+    const CONTROL_MSG_STOP = 'PHP-EC:Engine:Stop';
+
     /** @var int Level at which the memory pressure is considered resolved */
     const MEMORY_PRESSURE_LOW_WATERMARK = 35;
 
@@ -211,6 +217,12 @@ class Scheduler implements LoggerAwareInterface {
     /** @var bool Flag to track if we are shutting down the engine */
     protected bool $shuttingDown = false;
 
+    /** @var TimerInterface|null */
+    protected ?TimerInterface $shutdownTimer = null;
+
+    /**
+     * @param string[] $rules An array of Rules defined by classNames
+     */
     public function __construct(array $rules)
     {
         $this->rules = $rules;
@@ -360,13 +372,12 @@ class Scheduler implements LoggerAwareInterface {
         $actionConfig = $this->actionConfig[$actionName];
         /** Handle singleShot processes true === $actionConfig['singleShot'] ||  */
         if (!isset($this->runningActions[$actionName])) {
-            /** If there is no running action then we initialise the process */
-            $process = new Process($actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env']);
+            /** If there is no running action then we initialise the process, we call exec to ensure actions can receive our signals and not the default bash wrapper */
+            $process = new Process('exec ' . $actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env']);
             $process->start($this->loop);
 
-            $process->stderr->on('data', function ($data) {
-                //@TODO handle any error messages
-                $this->logger->error($data);
+            $process->stderr->on('data', function ($data) use ($actionName) {
+                $this->logger->error("$actionName message: " . trim($data));
             });
 
             $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
@@ -388,7 +399,6 @@ class Scheduler implements LoggerAwareInterface {
                     $this->erroredActionCommands[] = $error;
                     unset($this->inflightActionCommands[$response->getId()]);
 
-                    /** @TODO We should be placing these errors into an external system to be logged and possibly processed */
                     $this->logger->error($response->getError()->getMessage() . " : " . json_encode($response->getError()->getData()));
                 }
                 /** Release memory used by the inflight action table */
@@ -431,6 +441,13 @@ class Scheduler implements LoggerAwareInterface {
                 unset($this->runningActions[$actionName]);
                 if (count($this->runningActions) === 0)
                 {
+                    if (true === $this->shuttingDown) {
+                        /** If we are shutting down then continue the process */
+                        $this->exit();
+                    }
+                    /** The runningActions queue array can grow large, using a lot of memory,
+                     * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
+                     */
                     $this->runningActions = [];
                 }
                 $this->dirty = true;
@@ -539,8 +556,10 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->critical("Error creating temporary save state file, check filesystem");
             return;
         }
-        file_put_contents($filename, json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-        rename($filename, $this->saveFileName);
+        $state = json_encode($this->buildState());
+        if (!(@file_put_contents($filename, $state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) === strlen($state) && rename($filename, $this->saveFileName))) {
+            $this->logger->critical("Save state sync failed. {lasterror}", ['lasterror' => json_encode(error_get_last())]);
+        }
     }
 
     /**
@@ -657,6 +676,7 @@ class Scheduler implements LoggerAwareInterface {
             {
                 $env = array_merge([static::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
             }
+            //Use exec to ensure process receives our signals and not the bash wrapper
             $process = new Process('exec ' . $config['cmd'], $config['wd'], $env);
             $this->setup_input_process($process, $id);
             if ($process->isRunning()) {
@@ -746,30 +766,66 @@ class Scheduler implements LoggerAwareInterface {
         }
 
         if (count($this->input_processes) > 0) {
-            $this->logger->info( "Shutting down running input processes\n");
+            $this->logger->info( "Shutting down running input processes");
             foreach ($this->input_processes as $processKey => $process) {
                 if (false === $process->terminate(SIGTERM)) {
-                    $this->logger->error( "Unable to send SIGTERM to input process $processKey\n");
+                    $this->logger->error( "Unable to send SIGTERM to input process $processKey");
                 }
                 if ($process->isStopped()) {
                     $process->terminate(SIGCONT); // If our input processes are paused by memory pressure then we need to send SIGCONT after SIGTERM as they are currently stopped
                 }
             }
-        }
-        //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
-        $this->loop->addTimer(10.0, function() {
-            $this->logger->warning( "Input processes did not shutdown within the timeout delay...");
+
+            //Set up a timer to forcefully move the scheduler into the next shutdown phase if the input's have not shutdown in time
+            $this->shutdownTimer = $this->loop->addTimer(10.0, function() {
+                $this->logger->warning( "Input processes did not shutdown within the timeout delay...");
+                $this->stop();
+            });
+        } else {
             $this->stop();
-        });
+        }
+
+    }
+
+    /**
+     * Input processes are stopped. Shutdown any running actions (some may need to be flused)
+     */
+    public function stop()
+    {
+        if (null !== $this->shutdownTimer) {
+            $this->loop->cancelTimer($this->shutdownTimer);
+            $this->shutdownTimer = null;
+        }
+        /**
+         * Notify any rules listening for a Stop event that we are stopping
+         */
+        $this->engine->handle(new Event(['event' => static::CONTROL_MSG_STOP]));
+
+        /** Check if we have any running action commands, if we do then some actions may not have completed and/or need to flush+complete tasks. Send them a SIGTERM to complete their shutdown */
+        if (count($this->runningActions) > 0) {
+            $this->logger->info( "Shutting down running action processes");
+            foreach ($this->runningActions as $processKey => $process) {
+                if (false === $process->terminate(SIGTERM)) {
+                    $this->logger->error("Unable to send SIGTERM to action process $processKey");
+                }
+            }
+
+            //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
+            $this->shutdownTimer = $this->loop->addTimer(10.0, function() {
+                $this->logger->warning( "Action processes did not shutdown within the timeout delay...");
+                $this->exit();
+            });
+        } else {
+            $this->exit();
+        }
     }
 
     /**
      * Stop the Loop and sync state to disk
      */
-    public function stop()
-    {
-        if (count($this->inflightActionCommands)) {
-            $this->logger->error( "There were running action commands at the time of stopping");
+    public function exit() {
+        if (count($this->inflightActionCommands) > 0 ) {
+            $this->logger->error("There were still inflight action commands at shutdown.");
         }
         $this->loop->stop();
         $this->logger->debug( "Event Loop stopped");
@@ -800,6 +856,7 @@ class Scheduler implements LoggerAwareInterface {
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
+        //@TODO add a clean shutdown flag here in save state
         return $state;
     }
 
