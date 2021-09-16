@@ -14,6 +14,7 @@ namespace EdgeTelemetrics\EventCorrelation;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use RuntimeException;
 
+use function function_exists;
 use const PHP_BINARY;
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')) {
@@ -92,5 +93,17 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\handleMissingClass')) {
         error_log("Unable to autoload Rule $unknownClassName, generating an alias for cleaning up");
         /** Alias UndefinedRule to the unknown class */
         class_alias(UndefinedRule::class, $unknownClassName);
+    }
+}
+
+if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcLogMessage')) {
+    /**
+     * Helper function for an input or action process to send a log message to the parent scheduler
+     * @param string $level LogLevel per \Psr\Log\LogLevel
+     * @param string $message
+     */
+    function rpcLogMessage(string $level, string $message) {
+        $rpc = new JsonRpcNotification(Scheduler::INPUT_ACTION_LOG, ['logLevel' => $level, 'message' => $message ]);
+        fwrite(STDOUT, json_encode($rpc) . "\n");
     }
 }
