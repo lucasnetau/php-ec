@@ -193,8 +193,11 @@ class Scheduler implements LoggerAwareInterface {
     /** @var string RPC Method to record a checkpoint for an import process */
     const INPUT_ACTION_CHECKPOINT = 'checkpoint';
 
+    /** @var string RPC Method to log a message from an import process */
+    const INPUT_ACTION_LOG = 'log';
+
     /** @var array Accepted input RPC methods */
-    const INPUT_ACTIONS = [ self::INPUT_ACTION_HANDLE, self::INPUT_ACTION_CHECKPOINT ];
+    const INPUT_ACTIONS = [ self::INPUT_ACTION_HANDLE, self::INPUT_ACTION_CHECKPOINT, self::INPUT_ACTION_LOG ];
 
     /** @var string RPC method name to get an action handler to run a request */
     const ACTION_RUN_METHOD = 'run';
@@ -282,6 +285,10 @@ class Scheduler implements LoggerAwareInterface {
                 case self::INPUT_ACTION_CHECKPOINT:
                     $this->input_processes_checkpoints[$id] = $rpc->getParams();
                     $this->dirty = true;
+                    break;
+                case self::INPUT_ACTION_LOG:
+                    //Log action expects logLevel to match \Psr\Log\LogLevel
+                    $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'));
                     break;
                 default:
                     throw new RuntimeException("Unknown json rpc command {$rpc->getMethod()} from input process");
