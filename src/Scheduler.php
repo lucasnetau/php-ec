@@ -194,16 +194,13 @@ class Scheduler implements LoggerAwareInterface {
     const INPUT_ACTION_CHECKPOINT = 'checkpoint';
 
     /** @var string RPC Method to log a message from an import process */
-    const INPUT_ACTION_LOG = 'log';
+    const RPC_PROCESS_LOG = 'log';
 
     /** @var array Accepted input RPC methods */
-    const INPUT_ACTIONS = [ self::INPUT_ACTION_HANDLE, self::INPUT_ACTION_CHECKPOINT, self::INPUT_ACTION_LOG ];
+    const INPUT_ACTIONS = [ self::INPUT_ACTION_HANDLE, self::INPUT_ACTION_CHECKPOINT, self::RPC_PROCESS_LOG ];
 
     /** @var string RPC method name to get an action handler to run a request */
     const ACTION_RUN_METHOD = 'run';
-
-    /** @var string RPC method from an Action to request the scheduler to log a message*/
-    const ACTION_LOG_METHOD = 'log';
 
     /** @var int */
     protected int $memoryLimit = 0;
@@ -289,7 +286,7 @@ class Scheduler implements LoggerAwareInterface {
                     $this->input_processes_checkpoints[$id] = $rpc->getParams();
                     $this->dirty = true;
                     break;
-                case self::INPUT_ACTION_LOG:
+                case self::RPC_PROCESS_LOG:
                     //Log action expects logLevel to match \Psr\Log\LogLevel
                     $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'));
                     break;
@@ -418,7 +415,7 @@ class Scheduler implements LoggerAwareInterface {
                     }
                     $this->dirty = true;
                 } elseif ($rpc instanceof JsonRpcNotification) {
-                    if ($rpc->getMethod() === self::ACTION_LOG_METHOD) {
+                    if ($rpc->getMethod() === self::RPC_PROCESS_LOG) {
                         //Log action expects logLevel to match \Psr\Log\LogLevel
                         $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'));
                     }
@@ -840,12 +837,18 @@ class Scheduler implements LoggerAwareInterface {
      * Stop the Loop and sync state to disk
      */
     public function exit() {
-        if (count($this->inflightActionCommands) > 0 ) {
-            $this->logger->error("There were still inflight action commands at shutdown.");
+        if (null !== $this->shutdownTimer) {
+            $this->loop->cancelTimer($this->shutdownTimer);
+            $this->shutdownTimer = null;
         }
-        $this->loop->stop();
-        $this->logger->debug( "Event Loop stopped");
-        $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
+        $this->loop->futureTick(function() {
+            if (count($this->inflightActionCommands) > 0 ) {
+                $this->logger->error("There were still inflight action commands at shutdown.");
+            }
+            $this->loop->stop();
+            $this->logger->debug("Event Loop stopped");
+            $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
+        });
     }
 
     /**
