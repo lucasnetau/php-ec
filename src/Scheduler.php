@@ -15,6 +15,7 @@ use DateTimeImmutable;
 use Exception;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
+use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
 use Psr\Log\NullLogger;
 use React\EventLoop\Loop;
@@ -60,6 +61,7 @@ use const SIGHUP;
 /**
  * Class Scheduler
  * @package EdgeTelemetrics\EventCorrelation
+ * @property LoggerInterface $logger
  */
 class Scheduler implements LoggerAwareInterface {
     /** PSR3 logger provides $this->logger */
