@@ -710,7 +710,10 @@ class Scheduler implements LoggerAwareInterface {
          */
         $this->engine->on('event', function(Event $event) {
             if (null === $this->newEventAction) {
-                $this->engine->handle($event);
+                $this->loop->futureTick(function() use ($event) {
+                    /** We handle the new event in a future tick to ensure we don't get stuck in a loop if a timed out Rule is emitted an event */
+                    $this->engine->handle($event);
+                });
             } else {
                 $action = new Action($this->newEventAction, $event);
                 $this->engine->emit('action', [$action]);
