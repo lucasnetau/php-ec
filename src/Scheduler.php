@@ -346,7 +346,7 @@ class Scheduler implements LoggerAwareInterface {
             /** We stop processing if there are no input processes available **/
             if (0 === count($this->input_processes)) {
                 $this->logger->info("No more input processes running. Shutting down");
-                $this->stop();
+                $this->shutdown();
             }
         });
     }
