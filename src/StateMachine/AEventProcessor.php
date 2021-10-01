@@ -392,6 +392,13 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         return json_encode($this, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
     }
 
+    public function __serialize(): array
+    {
+        return [
+            'data' => $this->serialize(),
+        ];
+    }
+
     public function unserialize($data)
     {
         $data = json_decode($data, true);
@@ -407,6 +414,10 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
             unset($data['metrics']);
         }
         $this->updateTimeout();
+    }
+
+    public function __unserialize(array $data) {
+        $this->unserialize($data['data']);
     }
 
     public function resolveEvents($events)
