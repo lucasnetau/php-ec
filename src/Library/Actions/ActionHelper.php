@@ -26,6 +26,11 @@ use function EdgeTelemetrics\EventCorrelation\rpcLogMessage;
 /**
  * Class Action Helper
  * @package EdgeTelemetrics\EventCorrelation
+ *
+ * This Helper Class can be initialised by Actions. It will set up the STDOUT and STDIN streams to support JSON-RPC to/from the Scheduler
+ * ActionHelper will emit two events
+ *  * run - Event the action should watch for to handle a RPC notification/method call, a JsonRpcNotification will be passed as data
+ *  * shutdown - On receiving this event the action should flush buffers and then call the ActionHelper::stop() function
  */
 class ActionHelper extends EventEmitter {
 
@@ -70,15 +75,27 @@ class ActionHelper extends EventEmitter {
         });
     }
 
+    /**
+     * Write JSON-RPC message to Standard Out
+     * @param RpcMessageInterface $rpc
+     */
     public function write(RpcMessageInterface $rpc) {
         $this->output->write($rpc);
     }
 
+    /**
+     * Helper method to start the Event loop
+     */
     public function run() {
         $this->loop->run();
     }
 
+    /**
+     * Actions should signal they have flushed any buffers and are ready for us to stop by calling this method
+     */
     public function stop() {
-        $this->loop->stop();
+        $this->loop->futureTick( function() { //Stop in a future tick to allow the stdout streams to flush
+            $this->loop->stop();
+        });
     }
 }
