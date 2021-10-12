@@ -12,6 +12,7 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
+use DateTimeInterface;
 use DateTimeZone;
 use Exception;
 use function ucfirst;
@@ -132,9 +133,9 @@ class Event implements IEvent {
     public function jsonSerialize() : array
     {
         $object = get_object_vars($this);
-        $object['datetime'] = $this->datetime->format('c');
+        $object['datetime'] = $this->datetime->format(DateTimeInterface::RFC3339_EXTENDED);
         if (null !== $this->receivedTime) {
-            $object['receivedTime'] = $this->receivedTime->format('c');
+            $object['receivedTime'] = $this->receivedTime->format(DateTimeInterface::RFC3339_EXTENDED);
         }
         else
         {
