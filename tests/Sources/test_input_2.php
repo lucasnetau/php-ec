@@ -4,7 +4,7 @@ use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 
-include __DIR__ . "/../vendor/autoload.php";
+include __DIR__ . "/../../vendor/autoload.php";
 
 $length = 60 * 1000000000; //60 seconds
 

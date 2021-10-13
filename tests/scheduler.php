@@ -33,13 +33,13 @@ $scheduler = new class($rules) extends Scheduler {
         set_exception_handler([$this, "handle_exception"]);
         $this->setLogger(new StderrLogger(LogLevel::DEBUG));
 
-        $this->register_input_process('test_data_stream_1', php_cmd(__DIR__ . "/test_input_1.php"));
-        $this->register_input_process('test_data_stream_2', php_cmd(__DIR__ . "/test_input_2.php"));
+        $this->register_input_process('test_data_stream_1', php_cmd(__DIR__ . "/Sources/test_input_1.php"));
+        $this->register_input_process('test_data_stream_2', php_cmd(__DIR__ . "/Sources/test_input_2.php"));
 
         if (file_exists('/tmp/php_ec-scheduler_test_logs.txt')) {
             unlink('/tmp/php_ec-scheduler_test_logs.txt');
         }
-        $this->register_action('log', php_cmd(__DIR__ . "/log.php"), null, false, [
+        $this->register_action('log', php_cmd(__DIR__ . "/Actions/log.php"), null, false, [
             'LOG_FILENAME' => '/tmp/php_ec-scheduler_test_logs.txt',
         ]);
 

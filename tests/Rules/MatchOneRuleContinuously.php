@@ -20,6 +20,6 @@ class MatchOneRuleContinuously extends Rule {
 
     public function fire()
     {
-        echo __CLASS__ . " matched exact event event: " . $this->getFirstEvent()->event . "\n";
+        //echo __CLASS__ . " matched exact event event: " . $this->getFirstEvent()->event . "\n";
     }
 }

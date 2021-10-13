@@ -10,6 +10,6 @@ class MatchAnyRule extends Rule {
 
     public function fire()
     {
-        echo __CLASS__ . " matched any event: " . $this->getFirstEvent()->event . "\n";
+        //echo __CLASS__ . " matched any event: " . $this->getFirstEvent()->event . "\n";
     }
 }
