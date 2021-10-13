@@ -857,13 +857,13 @@ class Scheduler implements LoggerAwareInterface {
     }
 
     /**
-     * @return false|mixed
+     * @return false|array
      */
     public function loadStateFromFile()
     {
         if (file_exists($this->saveFileName))
         {
-            return json_decode(file_get_contents($this->saveFileName), true);
+            return json_decode(file_get_contents($this->saveFileName), true) ?? false;
         }
         return false;
     }
