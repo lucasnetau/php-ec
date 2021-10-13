@@ -574,7 +574,10 @@ class Scheduler implements LoggerAwareInterface {
         $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if (!(@file_put_contents($filename, $state) === strlen($state) && rename($filename, $this->saveFileName))) {
             $this->logger->critical("Save state sync failed. {lasterror}", ['lasterror' => json_encode(error_get_last())]);
+            return;
         }
+
+        $this->logger->debug('State saved to filesystem');
     }
 
     /**
@@ -781,6 +784,11 @@ class Scheduler implements LoggerAwareInterface {
         $this->shuttingDown = true;
         if (null !== $this->nextTimer) {
             $this->loop->cancelTimer($this->nextTimer);
+            $this->nextTimer = null;
+        }
+
+        if (null !== $this->saveHandler) {
+            $this->loop->cancelTimer($this->saveHandler);
         }
 
         if (count($this->input_processes) > 0) {
