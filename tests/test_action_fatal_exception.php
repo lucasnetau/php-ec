@@ -52,3 +52,5 @@ define('STATE_FILE', tempnam(sys_get_temp_dir(), 'php-ec-test.'));
 
 $state = json_decode(file_get_contents(STATE_FILE), true);
 echo json_encode($state, JSON_PRETTY_PRINT);
+
+unlink(STATE_FILE);
