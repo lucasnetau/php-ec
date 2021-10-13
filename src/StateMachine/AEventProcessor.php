@@ -363,7 +363,10 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         self::$eventstream_live = true;
     }
 
-    public function jsonSerialize()
+    /**
+     * @return array
+     */
+    public function jsonSerialize() : array
     {
         $return = [];
         $return['events'] = array_map(function ($event) {
