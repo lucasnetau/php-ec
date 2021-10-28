@@ -7,7 +7,7 @@ use EdgeTelemetrics\JSON_RPC\Error as JsonRpcError;
 
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
 
-require __DIR__ . '/../vendor/autoload.php';
+require __DIR__ . '/../../vendor/autoload.php';
 
 disableOutputBuffering();
 

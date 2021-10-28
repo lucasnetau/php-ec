@@ -20,14 +20,9 @@ use Psr\Log\LogLevel;
 use React\Stream\ReadableResourceStream;
 use React\Stream\WritableResourceStream;
 
-use Throwable;
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
 use function EdgeTelemetrics\EventCorrelation\rpcLogMessage;
-use function error_get_last;
-use function fwrite;
-use function json_encode;
-use function register_shutdown_function;
-use function set_exception_handler;
+use function EdgeTelemetrics\EventCorrelation\setupErrorHandling;
 
 /**
  * Class Action Helper
@@ -51,20 +46,9 @@ class ActionHelper extends EventEmitter {
     const ACTION_SHUTDOWN = 'shutdown';
 
     public function __construct() {
+        setupErrorHandling(true);
         disableOutputBuffering();
         $this->loop = Loop::get();
-        //Register these after the ReactPHP event loop is initialised via Loop::get() to ensure out shutdown function is always processed after the one registered there
-        register_shutdown_function(function() {
-            $last_error = error_get_last();
-            if (($last_error['type'] ?? 0) & (E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR)) {
-                fwrite(STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY, "Fatal Error ({$last_error['file']}:{$last_error['line']}): {$last_error["message"]}")) . "\n");
-            }
-        });
-        //If any unhandled exception occur then log them to STDOUT (skip the and WritableStreamInterface $output) then terminate the Loop
-        set_exception_handler(function (Throwable $exception) {
-            fwrite(STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY, "Action terminating on uncaught exception. " . $exception->getMessage() . "\n" . $exception->getTraceAsString())) . "\n");
-            Loop::stop();
-        });
 
         $this->input = new Decoder( new ReadableResourceStream(STDIN));
         $this->output = new Encoder( new WritableResourceStream(STDOUT));

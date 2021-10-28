@@ -12,9 +12,18 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
+use Psr\Log\LogLevel;
+use React\EventLoop\Loop;
 use RuntimeException;
 
+use Throwable;
+use function error_get_last;
+use function escapeshellarg;
 use function function_exists;
+use function fwrite;
+use function json_encode;
+use function register_shutdown_function;
+use function set_exception_handler;
 use const PHP_BINARY;
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')) {
@@ -22,7 +31,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')
     function disableOutputBuffering()
     {
         /** Disable all output buffering */
-        ini_set('zlib.output_compression', '0');
+        @ini_set('zlib.output_compression', '0');
         ini_set('output_buffering', '0');
         ini_set('implicit_flush', '1');
         if (PHP_VERSION_ID < 80000) {
@@ -84,6 +93,14 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
     }
 }
 
+if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
+    function wrap_source_php_cmd(string $filename): string
+    {
+        $prepend_file = __DIR__ . '/Library/Source/source_prepend.php';
+        return escapeshellarg(PHP_BINARY) . " -d auto_prepend_file=" . escapeshellarg($prepend_file) . " -f " . escapeshellarg($filename) . " --";
+    }
+}
+
 /**
  * @param string $unknownClassName
  */
@@ -105,5 +122,41 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcLogMessage')) {
      */
     function rpcLogMessage(string $level, string $message): JsonRpcNotification {
         return new JsonRpcNotification(Scheduler::RPC_PROCESS_LOG, ['logLevel' => $level, 'message' => $message ]);
+    }
+}
+
+if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
+    function setupErrorHandling(bool $usingEventLoop)
+    {
+        //Errors should be written to STDERR and not STDOUT. Disable log errors to prevent duplicate messages to STDERR
+        ini_set('display_errors', 'stderr');
+        ini_set('log_errors', 'no');
+        if ($usingEventLoop) {
+            Loop::get();
+        }
+        //Register these after the ReactPHP event loop is initialised via Loop::get() to ensure out shutdown function is always processed after the one registered there
+        register_shutdown_function(function () {
+            $last_error = error_get_last();
+            if (($last_error['type'] ?? 0) & (E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR)) {
+                fwrite(STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY,
+                        "Fatal Error ({$last_error['file']}:{$last_error['line']}): {$last_error["message"]}")) . "\n");
+            }
+        });
+        //If any unhandled exception occur then log them to STDOUT (skip the and WritableStreamInterface $output) then terminate the Loop
+        set_exception_handler(function (Throwable $exception) use ($usingEventLoop) {
+            fwrite(STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY,
+                    "Process terminating on uncaught exception. " . $exception->getMessage() . "\n" . $exception->getTraceAsString())) . "\n");
+            if ($usingEventLoop) {
+                Loop::stop();
+            }
+        });
+    }
+}
+
+if (! function_exists('EdgeTelemetrics\EventCorrelation\initialiseSourceProcess')) {
+    function initialiseSourceProcess(bool $usingEventLoop)
+    {
+        disableOutputBuffering();
+        setupErrorHandling($usingEventLoop);
     }
 }
