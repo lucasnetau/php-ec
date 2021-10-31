@@ -96,7 +96,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
 if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
     function wrap_source_php_cmd(string $filename): string
     {
-        $prepend_file = __DIR__ . '/Library/Source/source_prepend.php';
+        $prepend_file = __DIR__ . '/../bin/source_prepend.php';
         return escapeshellarg(PHP_BINARY) . " -d auto_prepend_file=" . escapeshellarg($prepend_file) . " -f " . escapeshellarg($filename) . " --";
     }
 }
