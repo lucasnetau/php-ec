@@ -27,7 +27,7 @@ define('STATE_FILE', tempnam(sys_get_temp_dir(), 'php-ec-test.'));
         $this->setLogger(new StderrLogger(LogLevel::DEBUG));
 
         $this->register_input_process('source_with_exception', wrap_source_php_cmd(__DIR__ . "/Sources/source_with_exception.php"));
-        $this->register_input_process('source_with_exception', wrap_source_php_cmd(__DIR__ . "/Sources/source_with_error.php"));
+        $this->register_input_process('source_with_error', wrap_source_php_cmd(__DIR__ . "/Sources/source_with_error.php"));
 
         $this->register_action('log', php_cmd(__DIR__ . "/actions/log.php"), null, false, ['LOG_FILENAME' => '/tmp/php-ec-test.txt']);
 
