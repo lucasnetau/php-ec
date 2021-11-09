@@ -546,7 +546,7 @@ class Scheduler implements LoggerAwareInterface {
             return;
         }
         $file = $filesystem->file($filename);
-        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))->then(function () use ($file) {
+        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION))->then(function () use ($file) {
             $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) {
                 //Everything Good
                 $this->asyncSaveInProgress = false;
@@ -571,7 +571,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->critical("Error creating temporary save state file, check filesystem");
             return;
         }
-        $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
         if (!(@file_put_contents($filename, $state) === strlen($state) && rename($filename, $this->saveFileName))) {
             $this->logger->critical("Save state sync failed. {lasterror}", ['lasterror' => json_encode(error_get_last())]);
             return;
