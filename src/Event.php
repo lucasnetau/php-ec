@@ -12,7 +12,6 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
-use DateTimeInterface;
 use DateTimeZone;
 use Exception;
 use function ucfirst;
@@ -103,10 +102,20 @@ class Event implements IEvent {
         return null;
     }
 
+    public function getId()
+    {
+        return $this->id;
+    }
+
+    public function getEventName(): string
+    {
+        return $this->event;
+    }
+
     /**
      * @param DateTimeImmutable $time
      */
-    public function setReceivedTime(DateTimeImmutable $time)
+    public function setReceivedTime(DateTimeImmutable $time) : void
     {
         $this->receivedTime = $time;
     }
@@ -118,24 +127,18 @@ class Event implements IEvent {
      */
     public function getDatetime() : ?DateTimeImmutable
     {
-        if (null === $this->receivedTime)
-        {
-            return $this->datetime;
-        }
-        else {
-            return $this->receivedTime;
-        }
+        return ($this->receivedTime ?? $this->datetime);
     }
 
     /**
+     * Convert this Event into a plain PHP Array
      * @return array
      */
-    public function jsonSerialize() : array
-    {
+    public function toArray() : array {
         $object = get_object_vars($this);
-        $object['datetime'] = $this->datetime->format(DateTimeInterface::RFC3339_EXTENDED);
+        $object['datetime'] = $this->datetime->format(IEvent::DATETIME_SERIALISATION_FORMAT);
         if (null !== $this->receivedTime) {
-            $object['receivedTime'] = $this->receivedTime->format(DateTimeInterface::RFC3339_EXTENDED);
+            $object['receivedTime'] = $this->receivedTime->format(IEvent::DATETIME_SERIALISATION_FORMAT);
         }
         else
         {
@@ -145,7 +148,16 @@ class Event implements IEvent {
     }
 
     /**
+     * @return array
+     */
+    public function jsonSerialize() : array
+    {
+        return $this->toArray();
+    }
+
+    /**
      * @return false|string
+     * @deprecated
      */
     public function serialize()
     {
@@ -153,12 +165,29 @@ class Event implements IEvent {
     }
 
     /**
+     * @return array
+     */
+    public function __serialize(): array
+    {
+        return $this->toArray();
+    }
+
+    /**
      * @param string $data
      * @throws Exception
+     * @deprecated Left to support loading older state files
      */
     public function unserialize($data)
     {
         $data = json_decode($data, true);
+        $this->__unserialize($data);
+    }
+
+    /**
+     * @param array $data
+     * @throws Exception
+     */
+    public function __unserialize(array $data) {
         $this->datetime = new DateTimeImmutable($data['datetime']);
         unset($data['datetime']);
         if (isset($data['receivedTime'])) {

@@ -12,12 +12,37 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
+use DateTimeInterface;
 use JsonSerializable;
 use Serializable;
 
 interface IEvent extends JsonSerializable, Serializable {
 
-    public function setReceivedTime(DateTimeImmutable $time);
+    /**
+     * Format for serialising the event to JSON
+     */
+    public const DATETIME_SERIALISATION_FORMAT = DateTimeInterface::RFC3339_EXTENDED;
+
+    /**
+     * Get the event's unique id
+     * @return null|mixed
+     */
+    public function getId();
+
+    /**
+     * Get the name of the event
+     * @return string
+     */
+    public function getEventName() : string;
+
+    /**
+     * @param DateTimeImmutable $time
+     */
+    public function setReceivedTime(DateTimeImmutable $time) : void;
+
+    /**
+     * @return DateTimeImmutable|null
+     */
     public function getDatetime() : ?DateTimeImmutable;
 
 }
