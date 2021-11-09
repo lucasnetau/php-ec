@@ -390,21 +390,39 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         return $return;
     }
 
+    /**
+     * @return false|string|null
+     * @deprecated
+     */
     public function serialize()
     {
         return json_encode($this, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
     }
 
+    /**
+     * @return array
+     */
     public function __serialize(): array
     {
-        return [
-            'data' => $this->serialize(),
-        ];
+        return $this->jsonSerialize();
     }
 
+    /**
+     * @param string $data
+     * @throws Exception
+     * @deprecated Support left to support loading older state files
+     */
     public function unserialize($data)
     {
         $data = json_decode($data, true);
+        $this->__unserialize($data);
+    }
+
+    /**
+     * @param array $data
+     * @throws Exception
+     */
+    public function __unserialize(array $data) {
         $this->unresolved_events = $data['events'];
 
         $this->instanceId = $data['instanceId'] ?? $this->generateInstanceId(); //Generate a new ID if we don't have one serialized
@@ -417,10 +435,6 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
             unset($data['metrics']);
         }
         $this->updateTimeout();
-    }
-
-    public function __unserialize(array $data) {
-        $this->unserialize($data['data']);
     }
 
     public function resolveEvents($events)
