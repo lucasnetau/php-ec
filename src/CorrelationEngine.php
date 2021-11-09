@@ -25,6 +25,7 @@ use RuntimeException;
 
 use function abs;
 use function array_key_exists;
+use function fwrite;
 use function get_class;
 use function in_array;
 use function spl_object_hash;
@@ -546,7 +547,11 @@ class CorrelationEngine implements EventEmitterInterface {
              * First we unserialize all the events. We construct a table using the saved object hashes instead of the new ones
              * to allow the saved state machines to identify their events.
              */
-            $event = unserialize($eventData);
+            $event = @unserialize($eventData);
+            if (!($event instanceof IEvent)) {
+                fwrite(STDERR,'FATAL: Unserialisation of Event did not return an instance of IEvent' . PHP_EOL);
+                exit();
+            }
             $events[$hash] = $event;
         }
 
@@ -562,8 +567,11 @@ class CorrelationEngine implements EventEmitterInterface {
              * 4. Add state machine to our records
              * 5. Let the engine know what events to forward to the state machine.
              */
-            /** @var AEventProcessor $matcher */
-            $matcher = unserialize($matcherState);
+            $matcher = @unserialize($matcherState);
+            if (!($matcher instanceof AEventProcessor)) {
+                fwrite(STDERR,'FATAL: Unserialisation of Matcher did not return an instance of AEventProcessor' . PHP_EOL);
+                exit(1);
+            }
             if ($matcher instanceof UndefinedRule /** && error_on_undefined=false */) {
                 // Skip this if the rule is undefined
                 /** @TODO Log the matcherState to a file if we need to fixup and restore */

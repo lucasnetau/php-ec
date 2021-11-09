@@ -871,7 +871,17 @@ class Scheduler implements LoggerAwareInterface {
     {
         if (file_exists($this->saveFileName))
         {
-            return json_decode(file_get_contents($this->saveFileName), true) ?? false;
+            $contents = file_get_contents($this->saveFileName);
+            if ($contents === false || $contents === '') {
+                $this->logger->critical('State file exists but contents could not be read or were empty');
+                exit(1);
+            }
+            $state = json_decode($contents, true);
+            if ($state === null) {
+                $this->logger->critical('Save state file was corrupted. JSON Error: ' . json_last_error_msg() );
+                exit(1);
+            }
+            return $state;
         }
         return false;
     }
