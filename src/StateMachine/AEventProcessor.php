@@ -17,6 +17,7 @@ use EdgeTelemetrics\EventCorrelation\Event;
 use Evenement\EventEmitterTrait;
 use Exception;
 use RuntimeException;
+use function array_key_exists;
 use function count;
 use function in_array;
 use function array_key_first;
@@ -423,6 +424,12 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @throws Exception
      */
     public function __unserialize(array $data) {
+        //Detect old serialisation format
+        if (count($data) === 1 && array_key_exists('data', $data)) {
+            $this->unserialize($data['data']);
+            return;
+        }
+        
         $this->unresolved_events = $data['events'];
 
         $this->instanceId = $data['instanceId'] ?? $this->generateInstanceId(); //Generate a new ID if we don't have one serialized
