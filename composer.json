@@ -12,16 +12,23 @@
     "evenement/evenement": "^3.0.1",
     "edgetelemetrics/php-json-rpc": "^1.1.0",
     "clue/ndjson-react": "^1.2.0",
-    "react/child-process": "^0.6.3",
+    "react/child-process": "^0.6.4",
     "react/event-loop": "^1.2.0",
     "react/filesystem": "^0.1.2",
     "psr/log": "^1.0.1"
   },
   "suggest": {
     "ext-zend-opcache": "OPCache greatly increases performance and reduces memory usage",
-    "edgetelemetrics/timebucket": "Process temporal data in descrete time slices"
+    "edgetelemetrics/timebucket": "Process temporal data in descrete time slices",
+    "react/socket": "Required for Management server",
+    "react/http": "Required for Management server",
+    "nikic/fast-route": "Required for Management server",
+    "ext-libev": "Use the libev backend to improve performance of the event loop",
+    "ext-libuv": "Use the libuv backend to improve performance of the event loop"
   },
   "require-dev": {
+    "nikic/fast-route": "*",
+    "react/socket": "^1.9.0",
     "react/http": "^1.5.0",
     "nikic/php-parser" : "^4.12",
     "phpstan/phpstan" : "*",
