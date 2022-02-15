@@ -11,7 +11,7 @@
     "ext-pcntl": "*",
     "evenement/evenement": "^3.0.1",
     "edgetelemetrics/php-json-rpc": "^1.1.0",
-    "edgetelemetrics/timebucket": "^0.1.1",
+    "edgetelemetrics/timebucket": "^0.2",
     "clue/ndjson-react": "^1.2.0",
     "react/child-process": "^0.6.3",
     "react/event-loop": "^1.2.0",
