@@ -24,6 +24,7 @@ use function file_exists;
 use function function_exists;
 use function fwrite;
 use function json_encode;
+use function realpath;
 use function register_shutdown_function;
 use function set_exception_handler;
 use const PHP_BINARY;
@@ -92,7 +93,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
     function php_cmd(string $filename): string
     {
         if (!file_exists($filename)) {
-            throw new ScriptNotFound("$filename not found");
+            $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
         }
         return escapeshellarg(PHP_BINARY) . " -f " . escapeshellarg($filename) . " --";
     }
@@ -102,9 +103,9 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
     function wrap_source_php_cmd(string $filename): string
     {
         if (!file_exists($filename)) {
-            throw new ScriptNotFound("$filename not found");
+            $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
         }
-        $prepend_file = __DIR__ . '/../bin/source_prepend.php';
+        $prepend_file = realpath(__DIR__ . '/../bin/source_prepend.php');
         return escapeshellarg(PHP_BINARY) . " -d auto_prepend_file=" . escapeshellarg($prepend_file) . " -f " . escapeshellarg($filename) . " --";
     }
 }
