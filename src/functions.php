@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use EdgeTelemetrics\EventCorrelation\Exceptions\ScriptNotFound;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use Psr\Log\LogLevel;
 use React\EventLoop\Loop;
@@ -19,6 +20,7 @@ use RuntimeException;
 use Throwable;
 use function error_get_last;
 use function escapeshellarg;
+use function file_exists;
 use function function_exists;
 use function fwrite;
 use function json_encode;
@@ -89,6 +91,9 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
 if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
     function php_cmd(string $filename): string
     {
+        if (!file_exists($filename)) {
+            throw new ScriptNotFound("$filename not found");
+        }
         return escapeshellarg(PHP_BINARY) . " -f " . escapeshellarg($filename) . " --";
     }
 }
@@ -96,6 +101,9 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
 if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
     function wrap_source_php_cmd(string $filename): string
     {
+        if (!file_exists($filename)) {
+            throw new ScriptNotFound("$filename not found");
+        }
         $prepend_file = __DIR__ . '/../bin/source_prepend.php';
         return escapeshellarg(PHP_BINARY) . " -d auto_prepend_file=" . escapeshellarg($prepend_file) . " -f " . escapeshellarg($filename) . " --";
     }
