@@ -12,6 +12,7 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
+use EdgeTelemetrics\EventCorrelation\Management\Server;
 use Exception;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
@@ -225,6 +226,12 @@ class Scheduler implements LoggerAwareInterface {
     /** @var TimerInterface|null */
     protected ?TimerInterface $shutdownTimer = null;
 
+    /** @var bool */
+    protected bool $enabledManagementServer = false;
+
+    /** @var null|Server */
+    protected ?Server $managementServer = null;
+
     /**
      * @param string[] $rules An array of Rules defined by classNames
      */
@@ -335,7 +342,9 @@ class Scheduler implements LoggerAwareInterface {
             } else {
                 $this->logger->info("Input Process $id exited on signal: $term");
             }
-            if ($code === 255) { //255 = PHP Fatal exit code
+            if ($code === 127) {
+                $this->logger->critical("Input process $id exit was due to Command Not Found");
+            } elseif ($code === 255) { //255 = PHP Fatal exit code
                 $this->logger->critical("Input process $id exit was due to fatal PHP error");
             }
             if ($code !== 0 && false === $this->shuttingDown) {
@@ -432,7 +441,9 @@ class Scheduler implements LoggerAwareInterface {
                 } else {
                     $this->logger->info("Action $actionName exited on signal: $term");
                 }
-                if ($code === 255) { //255 = PHP Fatal exit code
+                if ($code === 127) {
+                    $this->logger->critical("Action $actionName exit was due to Command Not Found");
+                } elseif ($code === 255) { //255 = PHP Fatal exit code
                     $this->logger->critical("Action $actionName exit was due to fatal PHP error");
                 }
                 if ($code !== 0)
@@ -714,7 +725,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->engine->on('event', function(Event $event) {
             if (null === $this->newEventAction) {
                 $this->loop->futureTick(function() use ($event) {
-                    /** We handle the new event in a future tick to ensure we don't get stuck in a loop if a timed out Rule is emitted an event */
+                    /** We handle the new event in a future tick to ensure we don't get stuck in a loop if a timed out Rule is emitting an event */
                     $this->engine->handle($event);
                 });
             } else {
@@ -772,6 +783,9 @@ class Scheduler implements LoggerAwareInterface {
             gc_mem_caches();
             $this->saveStateSync();
         });
+
+        /** Initialise the management server */
+        $this->initialiseManagementServer();
 
         /** GO! */
         $this->loop->run();
@@ -892,6 +906,7 @@ class Scheduler implements LoggerAwareInterface {
     protected function getState() : array
     {
         $state = [];
+        $state['input']['running'] = array_keys($this->input_processes);
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
         $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
         $state['nextTimeout'] = $this->nextTimer === null ? 'none' : $this->timerScheduledAt->modify($this->nextTimer->getInterval() . ' seconds')->format('c');
@@ -1036,5 +1051,23 @@ class Scheduler implements LoggerAwareInterface {
             return (false !== $status);
         }
         return false;
+    }
+
+    /**
+     * Enable or disable the experimental management server
+     * @param bool $enable
+     */
+    public function enableManagementServer(bool $enable) {
+        $this->enabledManagementServer = $enable;
+    }
+
+    /**
+     * Initialise the management server if enabled
+     */
+    protected function initialiseManagementServer() {
+        if ($this->enabledManagementServer) {
+            $this->managementServer = new Server($this);
+            $this->logger->info("Management server listening on " . ($this->managementServer->getListeningAddress() ?? 'Unable to retrieve address'));
+        }
     }
 }
