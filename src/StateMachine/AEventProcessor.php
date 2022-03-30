@@ -122,7 +122,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     const HISTORICAL_IGNORE_TIMEOUT = false; // We can ignore the timeout if following up on events
 
     /**
-     * @var array Array of array of events this processor will handle
+     * @var string[][] Array of array of events this processor will handle
      */
     const EVENTS = [[]];
 
