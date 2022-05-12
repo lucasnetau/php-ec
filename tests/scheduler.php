@@ -9,6 +9,7 @@ use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRuleContinuously;
 
 use Psr\Log\LogLevel;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
+use function EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd;
 
 error_reporting( E_ALL );
 ini_set('display_errors', "on");
@@ -33,8 +34,9 @@ $scheduler = new class($rules) extends Scheduler {
         set_exception_handler([$this, "handle_exception"]);
         $this->setLogger(new StderrLogger(LogLevel::DEBUG));
 
-        $this->register_input_process('test_data_stream_1', php_cmd(__DIR__ . "/Sources/test_input_1.php"));
+        $this->register_input_process('test_data_stream_1', wrap_source_php_cmd(__DIR__ . "/Sources/test_input_1.php"));
         $this->register_input_process('test_data_stream_2', php_cmd(__DIR__ . "/Sources/test_input_2.php"));
+        $this->register_input_process('test_misconfigured_input', php_cmd(__DIR__ . "/Sources/noexist.php"));
 
         if (file_exists('/tmp/php_ec-scheduler_test_logs.txt')) {
             unlink('/tmp/php_ec-scheduler_test_logs.txt');
@@ -45,6 +47,7 @@ $scheduler = new class($rules) extends Scheduler {
 
         $this->setSavefileName("/tmp/php_ec-scheduler_test.state");
         $this->setSaveStateInterval(1);
+        $this->enableManagementServer(true);
     }
 
     function handle_exception($exception) {
