@@ -467,14 +467,16 @@ class Scheduler implements LoggerAwareInterface {
                 unset($this->runningActions[$actionName]);
                 if (count($this->runningActions) === 0)
                 {
-                    if (true === $this->shuttingDown) {
-                        /** If we are shutting down then continue the process */
-                        $this->exit();
-                    }
-                    /** The runningActions queue array can grow large, using a lot of memory,
+                    /**
+                     * The runningActions queue array can grow large, using a lot of memory,
                      * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
                      */
                     $this->runningActions = [];
+
+                    if (true === $this->shuttingDown && count($this->input_processes) === 0) {
+                        /** If we are shutting down and all input processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
+                        $this->exit();
+                    }
                 }
                 $this->dirty = true;
             });
