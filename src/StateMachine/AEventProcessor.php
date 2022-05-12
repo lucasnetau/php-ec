@@ -201,7 +201,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function acceptEvent(Event $event) : bool
     {
-        return true;
+        return true; //For simple Rules we always accept the event if it passes the acceptEventType check, no context is checked
     }
 
     /**
