@@ -31,10 +31,17 @@ use React\Filesystem\Filesystem;
 use React\Filesystem\FilesystemInterface;
 use RuntimeException;
 
+use function array_filter;
 use function array_key_first;
+use function array_keys;
+use function array_map;
 use function error_get_last;
+use function function_exists;
 use function gettype;
 use function is_array;
+use function json_last_error_msg;
+use function opcache_get_status;
+use function strlen;
 use function tempnam;
 use function json_encode;
 use function json_decode;
@@ -393,6 +400,8 @@ class Scheduler implements LoggerAwareInterface {
             /** If there is no running action then we initialise the process, we call exec to ensure actions can receive our signals and not the default bash wrapper */
             $process = new Process('exec ' . $actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env']);
             $process->start($this->loop);
+
+            $this->logger->info("Started action process $actionName");
 
             $process->stderr->on('data', function ($data) use ($actionName) {
                 $this->logger->error("$actionName message: " . trim($data));
