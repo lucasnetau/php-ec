@@ -41,9 +41,9 @@ Interface IEventMatcher extends JsonSerializable, Serializable {
 
     public function complete() : bool;
 
-    public function fire();
+    public function fire() : void;
 
-    public function alarm();
+    public function alarm() : void;
 
     public function firstEventDateTime(): ?DateTimeInterface;
 
