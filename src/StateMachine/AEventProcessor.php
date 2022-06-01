@@ -351,7 +351,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     /**
      * Wake up the EventProcessor once the request timeout has been reached
      */
-    public function alarm()
+    public function alarm() : void
     {
         $this->isTimedOut = true;
     }
