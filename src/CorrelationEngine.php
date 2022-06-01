@@ -12,6 +12,7 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use DateInterval;
+use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
 use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;

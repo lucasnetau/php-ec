@@ -9,16 +9,19 @@
  * file that was distributed with this source code.
  */
 
-namespace EdgeTelemetrics\EventCorrelation;
+namespace EdgeTelemetrics\EventCorrelation\Rule;
+
+use EdgeTelemetrics\EventCorrelation\Rule;
 
 /**
  * Class UndefinedRule
+ * @final
  * @package EdgeTelemetrics\EventCorrelation
  * An alias to this Rule will be automatically created by the CorrelationEngine if when loading saved state a Rule class definition is no longer found.
  */
-class UndefinedRule extends Rule
+final class UndefinedRule extends Rule
 {
-    public function fire() {}
+    public function fire() : void {}
     public function complete(): bool
     {
         return true;

@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use Psr\Log\LogLevel;
 use React\EventLoop\Loop;
