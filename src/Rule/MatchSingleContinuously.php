@@ -12,6 +12,7 @@
 namespace EdgeTelemetrics\EventCorrelation\Rule;
 
 use EdgeTelemetrics\EventCorrelation\Rule;
+use function count;
 
 /**
  * Class MatchSingleContinuously
@@ -20,6 +21,14 @@ use EdgeTelemetrics\EventCorrelation\Rule;
 abstract class MatchSingleContinuously extends Rule
 {
     const EVENTS = [[]];
+
+    public function __construct()
+    {
+        parent::__construct();
+        if (count(static::EVENTS) !== 1) {
+            throw new \RuntimeException('A rule of MatchSingleContinuously must have only one event group defined, ' . count(static::EVENTS) . ' are defined');
+        }
+    }
 
     public function complete() : bool
     {

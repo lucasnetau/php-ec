@@ -12,12 +12,19 @@
 namespace EdgeTelemetrics\EventCorrelation\Rule;
 
 use EdgeTelemetrics\EventCorrelation\Rule;
+use function count;
 
 /**
- * Class Continuously
+ * Class MatchSingle
  * @package EdgeTelemetrics\EventCorrelation\Rule
  */
 abstract class MatchSingle extends Rule
 {
-
+    public function __construct()
+    {
+        parent::__construct();
+        if (count(static::EVENTS) !== 1) {
+            throw new \RuntimeException('A rule of MatchSingle must have only one event group defined, ' . count(static::EVENTS) . ' are defined');
+        }
+    }
 }
