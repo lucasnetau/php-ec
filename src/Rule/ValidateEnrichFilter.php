@@ -66,7 +66,7 @@ abstract class ValidateEnrichFilter extends Rule
      */
     abstract protected function filter(?array $event) : ?array;
 
-    public function fire()
+    public function fire() : void
     {
         if ($this->complete() && !$this->actionFired)
         {
