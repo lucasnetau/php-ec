@@ -817,7 +817,7 @@ class Scheduler implements LoggerAwareInterface {
         }
 
         if (count($this->input_processes) > 0) {
-            $this->logger->info( "Shutting down running input processes");
+            $this->logger->debug( "Shutting down running input processes");
             foreach ($this->input_processes as $processKey => $process) {
                 if (false === $process->terminate(SIGTERM)) {
                     $this->logger->error( "Unable to send SIGTERM to input process $processKey");
@@ -854,17 +854,19 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Check if we have any running action commands, if we do then some actions may not have completed and/or need to flush+complete tasks. Send them a SIGTERM to complete their shutdown */
         if (count($this->runningActions) > 0) {
-            $this->logger->info( "Shutting down running action processes");
-            foreach ($this->runningActions as $processKey => $process) {
-                if (false === $process->terminate(SIGTERM)) {
-                    $this->logger->error("Unable to send SIGTERM to action process $processKey");
+            $this->loop->futureTick(function() {
+                $this->logger->debug("Shutting down running action processes");
+                foreach ($this->runningActions as $processKey => $process) {
+                    if (false === $process->terminate(SIGTERM)) {
+                        $this->logger->error("Unable to send SIGTERM to action process $processKey");
+                    }
                 }
-            }
 
-            //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
-            $this->shutdownTimer = $this->loop->addTimer(10.0, function() {
-                $this->logger->warning( "Action processes did not shutdown within the timeout delay...");
-                $this->exit();
+                //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
+                $this->shutdownTimer = $this->loop->addTimer(10.0, function () {
+                    $this->logger->warning("Action processes did not shutdown within the timeout delay...");
+                    $this->exit();
+                });
             });
         } else {
             $this->exit();
@@ -874,7 +876,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Stop the Loop and sync state to disk
      */
-    public function exit() {
+    public function exit() : void {
         if (null !== $this->shutdownTimer) {
             $this->loop->cancelTimer($this->shutdownTimer);
             $this->shutdownTimer = null;
