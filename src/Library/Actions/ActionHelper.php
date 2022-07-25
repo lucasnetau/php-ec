@@ -2,6 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Library\Actions;
 
+use Closure;
 use Clue\React\NDJson\Encoder;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
@@ -30,7 +31,7 @@ use function EdgeTelemetrics\EventCorrelation\setupErrorHandling;
  *
  * This Helper Class can be initialised by Actions. It will set up the STDOUT and STDIN streams to support JSON-RPC to/from the Scheduler
  * ActionHelper will emit two events
- *  * run - Event the action should watch for to handle a RPC notification/method call, a JsonRpcNotification will be passed as data
+ *  * run - Event the action should watch for to handle an RPC notification/method call, a JsonRpcNotification will be passed as data
  *  * shutdown - On receiving this event the action should flush buffers and then call the ActionHelper::stop() function
  */
 class ActionHelper extends EventEmitter {
@@ -44,6 +45,8 @@ class ActionHelper extends EventEmitter {
     const ACTION_EXECUTE = 'run';
 
     const ACTION_SHUTDOWN = 'shutdown';
+
+    protected Closure $signalHandler;
 
     public function __construct() {
         setupErrorHandling(true);
@@ -66,37 +69,42 @@ class ActionHelper extends EventEmitter {
             }
         });
 
+        $this->signalHandler = function(int $signal) {
+            $this->write(rpcLogMessage(LogLevel::DEBUG, "received signal $signal, finishing up action..."));
+            $this->loop->futureTick(function () {
+                $this->emit(self::ACTION_SHUTDOWN);
+            });
+        };
+
         /** Signal Handlers */
-        $this->loop->addSignal(SIGINT, function() {
-            $this->write(rpcLogMessage(LogLevel::DEBUG, "received SIGINT, flushing..."));
-            $this->emit(self::ACTION_SHUTDOWN);
-        });
-        $this->loop->addSignal(SIGTERM, function() {
-            $this->write(rpcLogMessage(LogLevel::DEBUG, "received SIGTERM, flushing..."));
-            $this->emit(self::ACTION_SHUTDOWN);
-        });
+        $this->loop->addSignal(SIGINT, $this->signalHandler);
+        $this->loop->addSignal(SIGTERM, $this->signalHandler);
     }
 
     /**
      * Write JSON-RPC message to Standard Out
      * @param RpcMessageInterface $rpc
+     * @return bool
      */
-    public function write(RpcMessageInterface $rpc) {
-        $this->output->write($rpc);
+    public function write(RpcMessageInterface $rpc) : bool {
+        return $this->output->write($rpc);
     }
 
     /**
      * Helper method to start the Event loop
      */
-    public function run() {
+    public function run() : void {
         $this->loop->run();
     }
 
     /**
      * Actions should signal they have flushed any buffers and are ready for us to stop by calling this method
      */
-    public function stop() {
-        $this->loop->futureTick( function() { //Stop in a future tick to allow the stdout streams to flush
+    public function stop() : void {
+        $this->output->end(); //Flush and close the output buffer to ensure the Scheduler has everything
+        $this->loop->removeSignal(SIGINT, $this->signalHandler);
+        $this->loop->removeSignal(SIGTERM, $this->signalHandler);
+        $this->loop->futureTick(function() {
             $this->loop->stop();
         });
     }
