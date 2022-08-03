@@ -4,12 +4,7 @@ namespace EdgeTelemetrics\EventCorrelation\tests\Rules;
 
 use EdgeTelemetrics\EventCorrelation\Rule;
 
-class MatchAnyRule extends Rule {
+class MatchAnyRule extends Rule\MatchSingle {
 
     const EVENTS = [[self::EVENT_MATCH_ANY]];
-
-    public function fire()
-    {
-        //echo __CLASS__ . " matched any event: " . $this->getFirstEvent()->event . "\n";
-    }
 }

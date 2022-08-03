@@ -5,13 +5,13 @@ namespace EdgeTelemetrics\EventCorrelation\tests\Rules;
 use EdgeTelemetrics\EventCorrelation\Action;
 use EdgeTelemetrics\EventCorrelation\Rule;
 
-class LogEverything extends Rule {
+class LogEverything extends Rule\MatchSingle {
 
     const EVENTS = [[self::EVENT_MATCH_ANY]];
 
-    public function fire()
+    public function onComplete() : void
     {
-        $action = new Action("log", $this->consumedEvents[0]);
+        $action = new Action("log", $this->getFirstEvent());
         $this->emit('data', [$action]);
     }
 }
