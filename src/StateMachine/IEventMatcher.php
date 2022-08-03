@@ -53,6 +53,8 @@ Interface IEventMatcher extends JsonSerializable, Serializable {
 
     public function getTimeout(): ?DateTimeInterface;
 
+    public function updateTimeout() : void;
+
     public function isTimedOut() : bool;
 
 }
