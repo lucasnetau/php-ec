@@ -203,6 +203,30 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function acceptEvent(Event $event) : bool
     {
+        if (0 === count($this->consumedEvents)) {
+            return $this->acceptInitialEvent($event);
+        }
+
+        return $this->acceptSubsequentEvent($event);
+    }
+
+    /**
+     * Check if we accept the initial event and save context if required
+     * @param Event $event
+     * @return bool
+     */
+    public function acceptInitialEvent(Event $event) : bool
+    {
+        return true; //For simple Rules we always accept the event if it passes the acceptEventType check, no context is checked
+    }
+
+    /**
+     * Check if we accept any subsequent event against stored context
+     * @param Event $event
+     * @return bool
+     */
+    public function acceptSubsequentEvent(Event $event) : bool
+    {
         return true; //For simple Rules we always accept the event if it passes the acceptEventType check, no context is checked
     }
 
