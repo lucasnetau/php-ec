@@ -12,8 +12,10 @@
 namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
 use DateInterval;
+use DateTimeImmutable;
 use DateTimeInterface;
 use EdgeTelemetrics\EventCorrelation\Event;
+use EdgeTelemetrics\EventCorrelation\IEvent;
 use Evenement\EventEmitterTrait;
 use Exception;
 use RuntimeException;
@@ -48,7 +50,7 @@ use function random_bytes;
  * - TIMEOUT = Single timeout value expressed as a Period string (eg PT30M for 30 Minutes)
  * - HISTORICAL_IGNORE_TIMEOUT (Bool) = When we are in historical mode do we suppress timeouts.
  *          Useful for catching up on events where timeouts may trigger an unintended event
- *          (eg sending a email when a later event complete the processor
+ *          (eg sending a email when a later event complete the processor)
  *
  * * Single Event Processor
  *  - Will process a single event and fire once (EVENTS = array of one array of event(s))
@@ -82,7 +84,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     protected bool $actionFired = false;
 
     /**
-     * @var Event[] array of Events that have been consumed
+     * @var IEvent[] array of Events that have been consumed
      */
     protected array $consumedEvents = [];
 
@@ -102,7 +104,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     protected ?DateTimeInterface $timeout = null;
 
     /**
-     * @var array Used when loading a serialised event processor (two step pass)
+     * @var string[] Used when loading a serialised event processor (two step pass)
      */
     protected array $unresolved_events;
 
@@ -250,7 +252,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * Trim the number of events we have consumed, retaining the most recent $length number of events
      * @param int $length
      */
-    public function trimEventChain(int $length)
+    public function trimEventChain(int $length) : void
     {
         if ($length < 0)
         {
@@ -278,7 +280,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     /**
      * Get the date time of the last event consumed
-     * @return \DateTimeImmutable|null
+     * @return DateTimeImmutable|null
      */
     public function lastSeenEventDateTime(): ?DateTimeInterface
     {
@@ -304,7 +306,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * Update the timeout after consuming an event. Cache this value rather than calculating it each call
      * @throws Exception
      */
-    public function updateTimeout()
+    public function updateTimeout() : void
     {
         /**
          * There is no timeout if any of the following are matched:
@@ -314,7 +316,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
          * > We have not consumed any events
          * > We have completed our task
          */
-        if ('PT0S' == static::TIMEOUT
+        if (self::NO_TIMEOUT_STRING == static::TIMEOUT
             || (false === self::$eventstream_live && static::HISTORICAL_IGNORE_TIMEOUT)
             || 0 == count($this->consumedEvents)
             || $this->complete())
@@ -359,7 +361,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     /**
      * Use the real time timestamp
      */
-    public static function setEventStreamLive()
+    public static function setEventStreamLive() : void
     {
         self::$eventstream_live = true;
     }
@@ -420,7 +422,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     }
 
     /**
-     * @param array $data
+     * @param array<string, mixed> $data
      * @throws Exception
      */
     public function __unserialize(array $data) {
@@ -444,9 +446,40 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         $this->updateTimeout();
     }
 
-    public function resolveEvents($events)
+    /**
+     * @param IEvent[] $events
+     */
+    public function resolveEvents(array $events) : void
     {
         $this->consumedEvents = array_map(function($event_id) use ($events) { return $events[$event_id]; } , $this->unresolved_events);
         unset($this->unresolved_events);
     }
+
+    /** Completion Callback handlers */
+    public function fire(): void
+    {
+        $this->onProgress();
+
+        if ($this->complete()) {
+            $this->onComplete();
+            $this->onDone();
+        }
+
+        if ($this->isTimedOut()) {
+            $this->onTimeout();
+            $this->onDone();
+        }
+    }
+
+    /** Called when EventProcessor has consumed all required events */
+    public function onComplete() : void {}
+
+    /** Called when EventProcessor's timeout has been reached */
+    public function onTimeout() : void {}
+
+    /** Called on consuming an event */
+    public function onProgress() : void {}
+
+    /** Called when either timeout or complete is reached */
+    public function onDone() : void {}
 }
