@@ -14,9 +14,22 @@ $engine = new CorrelationEngine([
     MatchOneRuleContinuously::class,
 ]);
 
+$length = 5 * 1000000000; //5 seconds
+
+$start = hrtime(true);
 try {
-    $engine->handle(new Event(['event' => 'Test:Event:1','datetime' => '2021-06-01T00:00:00+10']));
-    $engine->handle(new Event(['event' => 'Test:Event:Single','datetime' => '2021-06-01T00:00:00+10']));
+    while ((hrtime(true) - $start) < $length) {
+        $current_msec = (int)((hrtime(true) - $start) / 1e+6);
+
+        $minutes = $current_msec / 60000;
+        $left = $current_msec % 60000;
+        $seconds = $left / 1000;
+        $msec = $left % 1000;
+
+        $timestamp = "2021-06-01T00:" . sprintf("%02d:%02d.%03d", $minutes, $seconds, $msec) . "Z";
+        $engine->handle(new Event(['event' => 'Test:Event:1', 'datetime' => $timestamp]));
+        $engine->handle(new Event(['event' => 'Test:Event:Single', 'datetime' => $timestamp]));
+    }
 } catch (Exception $e) {
     error_log("Engine threw an error: " . $e->getMessage());
 }
