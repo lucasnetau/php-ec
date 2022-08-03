@@ -31,7 +31,7 @@ use const PHP_BINARY;
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')) {
 
-    function disableOutputBuffering()
+    function disableOutputBuffering() : void
     {
         /** Disable all output buffering */
         @ini_set('zlib.output_compression', '0');
@@ -39,11 +39,19 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')
         ini_set('implicit_flush', '1');
         if (PHP_VERSION_ID < 80000) {
             //PHP 7.4 and below used int as the flag
-            /** @noinspection PhpStrictTypeCheckingInspection */
+            /**
+             * @noinspection PhpStrictTypeCheckingInspection
+             * @phpstan-ignore-next-line
+             * @psalm-suppress InvalidBooleanArgument
+             */
             ob_implicit_flush(1);
         } else {
             //PHP8 and above now expect a boolean value
-            /** @noinspection PhpStrictTypeCheckingInspection */
+            /**
+             * @noinspection PhpStrictTypeCheckingInspection
+             * @phpstan-ignore-next-line
+             * @psalm-suppress InvalidScalarArgument
+             */
             ob_implicit_flush(true);
         }
         while (ob_get_level() > 0) {
@@ -59,10 +67,10 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\env')) {
      *
      * @param string $variableName The name of the environment variable.
      * @param ?string $defaultValue The default value to be used if the environment variable is not defined.
-     * @return string
+     * @return null|string
      * @throws RuntimeException If the variable was requested without a default value (non-optional) then this exception is thrown.
      */
-    function env(string $variableName, ?string $defaultValue = null): string
+    function env(string $variableName, ?string $defaultValue = null): ?string
     {
         // Only mark as optional if the default value was *explicitly* provided.
         $isOptional = (2 === func_num_args());
@@ -82,7 +90,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\env')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
-    function checkpoint($checkpoint)
+    function checkpoint($checkpoint) : void
     {
         $rpc = new JsonRpcNotification(Scheduler::INPUT_ACTION_CHECKPOINT, $checkpoint);
         fwrite(STDOUT, json_encode($rpc) . "\n");
@@ -114,7 +122,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
  * @param string $unknownClassName
  */
 if (! function_exists('EdgeTelemetrics\EventCorrelation\handleMissingClass')) {
-    function handleMissingClass(string $unknownClassName)
+    function handleMissingClass(string $unknownClassName) : void
     {
         error_log("Unable to autoload Rule $unknownClassName, generating an alias for cleaning up");
         /** Alias UndefinedRule to the unknown class */
@@ -135,7 +143,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcLogMessage')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
-    function setupErrorHandling(bool $usingEventLoop)
+    function setupErrorHandling(bool $usingEventLoop) : void
     {
         //Errors should be written to STDERR and not STDOUT. Disable log errors to prevent duplicate messages to STDERR
         ini_set('display_errors', 'stderr');
@@ -163,7 +171,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\initialiseSourceProcess')) {
-    function initialiseSourceProcess(bool $usingEventLoop)
+    function initialiseSourceProcess(bool $usingEventLoop) : void
     {
         disableOutputBuffering();
         setupErrorHandling($usingEventLoop);
