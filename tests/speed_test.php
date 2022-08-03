@@ -7,7 +7,6 @@ use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRule;
 use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRuleContinuously;
 
 include __DIR__ . "/../vendor/autoload.php";
-include __DIR__ . "/Rules/MatchAnyRule.php";
 
 $engine = new CorrelationEngine([
     MatchAnyRule::class,
@@ -23,4 +22,6 @@ while ((hrtime(true) - $start) < $length) {
     $engine->handle(new Event(['event' => 'Test:Event:1','datetime' => (new DateTimeImmutable())->format('c')]));
 }
 
-echo json_encode($engine->getState(), JSON_PRETTY_PRINT);
+$state = $engine->getState();
+
+echo 'Processed ' . $state['statistics']['seen']['Test:Event:1'] . ' events  in 60 seconds' . PHP_EOL;
