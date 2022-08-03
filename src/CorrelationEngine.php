@@ -52,15 +52,22 @@ use function implode;
 class CorrelationEngine implements EventEmitterInterface {
     use EventEmitterTrait;
 
+    /**
+     * @var array<string, IEventMatcher>
+     */
     protected array $eventProcessors = [];
 
+    /**
+     * @var array<string, class-string<IEventMatcher>[]>
+     */
     protected array $initialEventLookup = [];
 
     /**
-     * @var array Array of IEventMatchers
+     * @var array<string, IEventMatcher[]> Array of IEventMatched object hashes waiting for an event identified by the root key
      */
     protected array $waitingForNextEvent = [];
 
+    /** @var array<string, array<string, mixed>>  */
     protected array $timeouts = [];
 
     protected bool $eventstream_live = false;
@@ -79,19 +86,20 @@ class CorrelationEngine implements EventEmitterInterface {
     /** @var ?int Last event time based on wall clock time */
     protected ?int $lastEventReal = null;
 
-    /** @var array  */
+    /** @var array<string, mixed>  */
     protected array $statistics = [];
 
     const MAX_TIME_VARIANCE = 600; // In seconds
 
     /**
      * CorrelationEngine constructor.
-     * @param array $rules
+     * @param class-string<IEventMatcher>[] $rules Class name of rules to load
      */
     public function __construct(array $rules)
     {
         foreach($rules as $matcher)
         {
+            /** @var class-string<IEventMatcher> $eventname */
             foreach($matcher::initialAcceptedEvents() as $eventname)
             {
                 $this->initialEventLookup[$eventname][] = $matcher;
@@ -116,7 +124,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * @TODO Setup queueing of incoming events in a time bucket, setup an out of order tolerance with the help of the bucket to re-ordering incoming events
      * @TODO Clock source for non-live timestreams should be largest time seen minus the out of order tolerance
      */
-    public function handle(Event $event)
+    public function handle(Event $event) : void
     {
         $handledMatchers = [];
         $skipMatchers = [];
@@ -286,7 +294,7 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * @param IEventMatcher $matcher
      */
-    public function attachListeners(IEventMatcher $matcher)
+    public function attachListeners(IEventMatcher $matcher) : void
     {
         if (is_a($matcher, IEventGenerator::class) ||
             is_a($matcher, IActionGenerator::class)
@@ -299,7 +307,7 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * @param object $data
      */
-    public function handleEmit(object $data)
+    public function handleEmit(object $data) : void
     {
         /** Check if this is an event */
         if (is_a($data, Event::class))
@@ -322,7 +330,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * Remove matcher from our state tables
      * @param IEventMatcher $matcher
      */
-    protected function removeMatcher(IEventMatcher $matcher) {
+    protected function removeMatcher(IEventMatcher $matcher) : void {
         $this->clearWatchForEvents($matcher);
         unset($this->eventProcessors[spl_object_hash($matcher)]);
     }
@@ -330,9 +338,9 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * Keep note that the state machine $matcher is waiting for events $events
      * @param IEventMatcher $matcher
-     * @param array $events
+     * @param string[] $events
      */
-    public function addWatchForEvents(IEventMatcher $matcher, array $events)
+    public function addWatchForEvents(IEventMatcher $matcher, array $events) : void
     {
         foreach($events as $eventName)
         {
@@ -343,9 +351,9 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * Remove record that $matcher is waiting for certain events
      * @param IEventMatcher $matcher
-     * @param array $events
+     * @param string[] $events
      */
-    public function removeWatchForEvents(IEventMatcher $matcher, array $events)
+    public function removeWatchForEvents(IEventMatcher $matcher, array $events) : void
     {
         $matcherHash = spl_object_hash($matcher);
         foreach($events as $eventName)
@@ -367,7 +375,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * Remove record that $matcher is waiting for any events
      * @param IEventMatcher $matcher
      */
-    public function clearWatchForEvents(IEventMatcher $matcher) {
+    public function clearWatchForEvents(IEventMatcher $matcher) : void {
         $matcherHash = spl_object_hash($matcher);
         $events = [];
         foreach(array_keys($this->waitingForNextEvent) as $eventName) {
@@ -382,7 +390,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * Add timeout will add or remove a timeout for the matcher passed in.
      * @param IEventMatcher $matcher
      */
-    public function addTimeout(IEventMatcher $matcher)
+    public function addTimeout(IEventMatcher $matcher) : void
     {
         $timeout = $matcher->getTimeout();
         if (null === $timeout)
@@ -401,14 +409,14 @@ class CorrelationEngine implements EventEmitterInterface {
      * Remove any registered timeout for the matcher
      * @param IEventMatcher $matcher
      */
-    public function removeTimeout(IEventMatcher $matcher)
+    public function removeTimeout(IEventMatcher $matcher) : void
     { 
         unset($this->timeouts[spl_object_hash($matcher)]);
     }
 
     /**
      * Get the current timeouts for all running state machines. Sort the list prior to returning
-     * @return array
+     * @return array<string, mixed>
      */
     public function getTimeouts(): array
     {
@@ -425,7 +433,7 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * Set the Engine to start processing events in real-time against the clock vs historical data
      */
-    public function setEventStreamLive()
+    public function setEventStreamLive() : void
     {
         /**
          * When setting the event stream to live we need to reset our tracking of timeouts,
@@ -500,7 +508,7 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * Get the current representation of the engine's state as an array
-     * @return array
+     * @return array<string, mixed>
      */
     public function getState() : array
     {
@@ -535,7 +543,7 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * @param array $state
      */
-    public function setState(array $state)
+    public function setState(array $state) : void
     {
         $this->statistics = $state['statistics'];
         $events = [];
@@ -545,7 +553,7 @@ class CorrelationEngine implements EventEmitterInterface {
              * First we unserialize all the events. We construct a table using the saved object hashes instead of the new ones
              * to allow the saved state machines to identify their events.
              */
-            $event = @unserialize($eventData);
+            $event = @unserialize($eventData, ['allowed_classes' => [Event::class]]);
             if (!($event instanceof IEvent)) {
                 fwrite(STDERR,'FATAL: Unserialisation of Event did not return an instance of IEvent' . PHP_EOL);
                 exit();
@@ -607,7 +615,7 @@ class CorrelationEngine implements EventEmitterInterface {
     /**
      * Clear the dirty flag
      */
-    public function clearDirtyFlag()
+    public function clearDirtyFlag() : void
     {
         $this->dirty = false;
     }
@@ -617,7 +625,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * @param string $group
      * @param int $incr
      */
-    public function incrStat(string $group, string $name, int $incr = 1)
+    public function incrStat(string $group, string $name, int $incr = 1) : void
     {
         if (!isset($this->statistics[$group])) { $this->statistics[$group] = []; }
         if (!isset($this->statistics[$group][$name])) { $this->statistics[$group][$name] = 0; }
