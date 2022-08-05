@@ -241,7 +241,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     /**
      * Get the current chain of events that have been consumed
-     * @return array
+     * @return IEvent[]
      */
     public function getEventChain() : array
     {
@@ -270,6 +270,28 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
             return null;
         }
         return $this->consumedEvents[array_key_last($this->consumedEvents)];
+    }
+
+    /**
+     * Return one or more events matching the specified type in the order they were captured
+     * @param string $type
+     * @return IEvent|IEvent[]|null
+     */
+    public function getEventOfType(string $type) {
+        $matched = [];
+        foreach($this->consumedEvents as $event) {
+            if ($event->getEventName() === $type) {
+                $matched[] = $event;
+            }
+        }
+        $cnt = count($matched);
+        if (0 === $cnt) {
+            return null;
+        } elseif (1 === $cnt) {
+            return $matched[0];
+        } else {
+            return $matched;
+        }
     }
 
     /**
@@ -482,16 +504,14 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     /** Completion Callback handlers */
     public function fire(): void
     {
-        $this->onProgress();
-
         if ($this->complete()) {
             $this->onComplete();
             $this->onDone();
-        }
-
-        if ($this->isTimedOut()) {
+        } elseif ($this->isTimedOut()) {
             $this->onTimeout();
             $this->onDone();
+        } else {
+            $this->onProgress();
         }
     }
 
