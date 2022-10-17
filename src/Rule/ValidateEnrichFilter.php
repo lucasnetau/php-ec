@@ -21,7 +21,13 @@ use Exception;
  */
 abstract class ValidateEnrichFilter extends Rule
 {
-    protected bool $passed_checks = true;
+    protected ?Event $finalEvent = null;
+
+    protected array $errors = [
+        'validate' => [],
+        'enrich' => [],
+        'filter' => [],
+    ];
 
     /**
      * @param Event $event
@@ -35,11 +41,12 @@ abstract class ValidateEnrichFilter extends Rule
         $result = parent::handle($event);
         if (($result & self::EVENT_HANDLED) === self::EVENT_HANDLED) {
             $event = json_decode(json_encode($event), true);
-            $event = $this->filter($this->enrich($this->validate($event)));
+            $check = $this->filter($this->enrich($this->validate($event)));
 
-            if (null === $event) {
-                $this->passed_checks = false;
+            if (null === $check) {
                 return self::EVENT_HANDLED|self::EVENT_SUPPRESS;
+            } else {
+                $this->finalEvent = new Event($check);
             }
         }
         return $result;
@@ -70,7 +77,7 @@ abstract class ValidateEnrichFilter extends Rule
     {
         if ($this->complete() && !$this->actionFired)
         {
-            if ($this->passed_checks) {
+            if ($this->finalEvent !== null) {
                 $this->firePassed();
             } else {
                 $this->fireFailed();
