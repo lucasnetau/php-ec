@@ -7,7 +7,7 @@ class OrderPaymentReminder extends Rule {
 
     const EVENTS = [['Order:Payment:Timeout']];
 
-    public function fire()
+    public function fire() : void
     {
         if ($this->complete() && !$this->actionFired)
         {

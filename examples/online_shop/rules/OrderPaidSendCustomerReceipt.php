@@ -7,7 +7,7 @@ class OrderPaidSendCustomerReceipt extends Rule {
 
     const EVENTS = [['shop:order:paid']];
 
-    public function fire()
+    public function fire() : void
     {
         if ($this->complete() && !$this->actionFired)
         {

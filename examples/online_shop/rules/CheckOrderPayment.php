@@ -22,7 +22,7 @@ class CheckOrderPayment extends Rule {
         }
     }
 
-    public function fire()
+    public function fire() : void
     {
         if (!$this->actionFired)
         {
