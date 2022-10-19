@@ -110,10 +110,8 @@ class SysInfo {
                 foreach (explode("\n", trim($meminfo)) as $line) {
                     [$param, $value] = explode(":", $line);
                     $param = trim($param);
-                    echo $param;
                     switch ($param) {
                         case 'MemTotal':
-                            echo $value;
                             $value = explode(" ", trim($value));
                             $multiplier = (null == $value[1]) ? 1 : $multiplierTable[$value[1]];
                             $this->meminfo['physicalTotal'] = (int)$value[0] * $multiplier;
