@@ -769,8 +769,11 @@ class Scheduler implements LoggerAwareInterface {
         $this->setup_save_state();
 
         /** Monitor memory usage */
-        $this->memoryLimit = $this->calculateMemoryLimit();
-        $this->logger->debug("Memory limit set to {bytes} Bytes", ['bytes' => $this->memoryLimit,]);
+        $sysInfo = new SysInfo();
+        $this->memoryLimit = $sysInfo->getMemoryLimit();
+        $allowable = $sysInfo->getAllowableMemoryLimit();
+        $percentage = $this->memoryLimit === -1 ? 100 : ($this->memoryLimit/$allowable)*100;
+        $this->logger->debug("Memory limit set to {bytes} Bytes {percent}% of {total} Total Allowable", ['bytes' => $this->memoryLimit, 'total' => $allowable, 'percent' => number_format($percentage, 2)]);
         $this->loop->addPeriodicTimer(2, function() { $this->checkMemoryPressure(); });
 
         /** Gracefully shutdown */
@@ -958,10 +961,11 @@ class Scheduler implements LoggerAwareInterface {
      *  once we go above the high watermark or the number of inflight actions exceeds the running actions watermark,
      *  we pause input processes to allow inflight actions to complete and reduce memory usage.
      */
-    protected function checkMemoryPressure()
+    protected function checkMemoryPressure() : void
     {
         if ($this->memoryLimit === 0) {
-            $this->memoryLimit = $this->calculateMemoryLimit();
+            $sysInfo = new SysInfo();
+            $this->memoryLimit = $sysInfo->getMemoryLimit();
         } elseif ($this->memoryLimit === -1) {
             return; //We are configured for unlimited memory, so we disable memory pressure checks
         }
@@ -1028,28 +1032,6 @@ class Scheduler implements LoggerAwareInterface {
                 $this->pausedOnMemoryPressure = false;
             }
         }
-    }
-
-    /**
-     * @return int
-     * Calculate in Bytes the memory limit set in the PHP configuration
-     */
-    protected function calculateMemoryLimit() : int
-    {
-        $multiplierTable = ['K' => 1024, 'M' => 1024**2, 'G' => 1024**3];
-
-        $memory_limit_setting = ini_get('memory_limit');
-
-        if ("-1" == $memory_limit_setting) {
-            return -1;
-        }
-
-        preg_match("/^(-?[.0-9]+)([KMG])?$/i", $memory_limit_setting, $matches, PREG_UNMATCHED_AS_NULL);
-
-        $bytes = (int)$matches[1];
-        $multiplier = (null == $matches[2]) ? 1 : $multiplierTable[strtoupper($matches[2])];
-
-        return $bytes * $multiplier;
     }
 
     /**
