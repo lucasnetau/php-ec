@@ -139,7 +139,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     /**
      * Get the event(s) that this state machine class will start on
-     * @return array
+     * @return string[]
      */
     public static function initialAcceptedEvents() : array
     {
@@ -148,7 +148,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     /**
      * Get the event(s) that this state machine is waiting for next
-     * @return array
+     * @return string[]
      */
     public function nextAcceptedEvents() : array
     {
