@@ -254,7 +254,7 @@ class Scheduler implements LoggerAwareInterface {
      * @param string|null $wd
      * @param array $env
      */
-    public function register_input_process($id, string $cmd, ?string $wd = null, array $env = [])
+    public function register_input_process($id, string $cmd, ?string $wd = null, array $env = []) : void
     {
         $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env];
     }
@@ -264,6 +264,10 @@ class Scheduler implements LoggerAwareInterface {
      * @return Process
      */
     public function start_input_process($id) : Process {
+        if (isset($this->input_processes[$id])) {
+            $this->logger->critical('Input process ' . $id . ' already running');
+            return $this->input_processes[$id];
+        }
         $config = $this->input_processes_config[$id];
         $env = $config['env'];
         /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
@@ -375,7 +379,8 @@ class Scheduler implements LoggerAwareInterface {
             } elseif ($code === 255) { //255 = PHP Fatal exit code
                 $this->logger->critical("Input process $id exit was due to fatal PHP error");
             }
-            if ($code !== 0 && false === $this->shuttingDown) {
+            /** Restart the input process if it exits with an error code EXCEPT if it is exit code 127 - Command Not Found */
+            if (!in_array($code, [0,127], true) && false === $this->shuttingDown) {
                 $this->logger->debug("Restarting process $id");
                 $this->start_input_process($id);
             }
@@ -419,7 +424,7 @@ class Scheduler implements LoggerAwareInterface {
         /** Handle singleShot processes true === $actionConfig['singleShot'] ||  */
         if (!isset($this->runningActions[$actionName])) {
             /** If there is no running action then we initialise the process, we call exec to ensure actions can receive our signals and not the default bash wrapper */
-            $process = new Process('exec ' . $actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env']);
+            $process = new Process('exec ' . $actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env'] ?? []);
             $process->start($this->loop);
 
             $this->logger->info("Started action process $actionName");
