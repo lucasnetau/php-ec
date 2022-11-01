@@ -13,6 +13,7 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
+use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use Exception;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
@@ -56,9 +57,6 @@ use function gc_collect_cycles;
 use function gc_mem_caches;
 use function array_merge;
 use function mt_rand;
-use function ini_get;
-use function preg_match;
-use function strtoupper;
 use function trim;
 use function unlink;
 
@@ -206,7 +204,7 @@ class Scheduler implements LoggerAwareInterface {
     /** @var string RPC Method to log a message from an import process */
     const RPC_PROCESS_LOG = 'log';
 
-    /** @var array Accepted input RPC methods */
+    /** @var string[] Accepted input RPC methods */
     const INPUT_ACTIONS = [ self::INPUT_ACTION_HANDLE, self::INPUT_ACTION_CHECKPOINT, self::RPC_PROCESS_LOG ];
 
     /** @var string RPC method name to get an action handler to run a request */
@@ -240,7 +238,7 @@ class Scheduler implements LoggerAwareInterface {
     protected ?Server $managementServer = null;
 
     /**
-     * @param string[] $rules An array of Rules defined by classNames
+     * @param array<class-string<IEventMatcher>> $rules An array of Rules defined by classNames
      */
     public function __construct(array $rules)
     {
@@ -259,6 +257,29 @@ class Scheduler implements LoggerAwareInterface {
     public function register_input_process($id, string $cmd, ?string $wd = null, array $env = [])
     {
         $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env];
+    }
+
+    /**
+     * @param string|int $id
+     * @return Process
+     */
+    public function start_input_process($id) : Process {
+        $config = $this->input_processes_config[$id];
+        $env = $config['env'];
+        /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
+        if (isset($this->input_processes_checkpoints[$id]))
+        {
+            $env = array_merge([static::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
+        }
+        //Use exec to ensure process receives our signals and not the bash wrapper
+        $process = new Process('exec ' . $config['cmd'], $config['wd'], $env);
+        $this->setup_input_process($process, $id);
+        if ($process->isRunning()) {
+            $this->logger->info("Started input process $id");
+            $this->input_processes[$id] = $process;
+            return $process;
+        }
+        throw new RuntimeException('Input process ' . $id . ' failed to start');
     }
 
     /**
@@ -355,9 +376,8 @@ class Scheduler implements LoggerAwareInterface {
                 $this->logger->critical("Input process $id exit was due to fatal PHP error");
             }
             if ($code !== 0 && false === $this->shuttingDown) {
-                /**
-                 * @TODO Implement restart of input processes if process terminated with an error and we are not shutting down ($this->shuttingDown)
-                 */
+                $this->logger->debug("Restarting process $id");
+                $this->start_input_process($id);
             }
             /** We stop processing if there are no input processes available **/
             if (0 === count($this->input_processes)) {
@@ -370,8 +390,9 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Null will unset calling any Action for emitted events
      * @param string|null $actionName
+     * @noinspection PhpUnused
      */
-    public function setNewEventAction(?string $actionName)
+    public function setNewEventAction(?string $actionName) : void
     {
         $this->newEventAction = $actionName;
     }
@@ -383,7 +404,7 @@ class Scheduler implements LoggerAwareInterface {
      * @param bool|null $singleShot
      * @param array $env
      */
-    public function register_action(string $name, string $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [])
+    public function register_action(string $name, string $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = []) : void
     {
         $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot];
     }
@@ -470,7 +491,6 @@ class Scheduler implements LoggerAwareInterface {
                             $this->erroredActionCommands[] = $error;
                             unset($this->inflightActionCommands[$rpcId]);
                         }
-                        unset($terminatedActions);
                     }
                 }
                 unset($this->runningActions[$actionName]);
@@ -501,7 +521,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * @param string $filename
      */
-    public function setSavefileName(string $filename)
+    public function setSavefileName(string $filename) : void
     {
         $this->saveFileName = $filename;
     }
@@ -509,7 +529,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      *
      */
-    public function setup_save_state()
+    public function setup_save_state() : void
     {
         /**
          * Set up a time to save the state of the correlation engine every saveStateSeconds
@@ -529,7 +549,7 @@ class Scheduler implements LoggerAwareInterface {
             }
         });
 
-        /** Setup an hourly time to save state (or skip if we are already saving state when this timer fires) */
+        /** Set up an hourly time to save state (or skip if we are already saving state when this timer fires) */
         $this->loop->addPeriodicTimer(3600, function() use ($filesystem) {
             if (false === $this->asyncSaveInProgress) {
                 $this->asyncSaveInProgress = true;
@@ -552,7 +572,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * @param float $seconds
      */
-    public function setSaveStateInterval(float $seconds) {
+    public function setSaveStateInterval(float $seconds) : void {
         $this->saveStateSeconds = $seconds;
     }
 
@@ -560,7 +580,7 @@ class Scheduler implements LoggerAwareInterface {
      * Save the current system state in an async manner
      * @param FilesystemInterface $filesystem
      */
-    public function saveStateAsync(FilesystemInterface $filesystem)
+    public function saveStateAsync(FilesystemInterface $filesystem) : void
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         if (false === $filename) {
@@ -586,7 +606,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Save the current state in a synchronous manner
      */
-    public function saveStateSync()
+    public function saveStateSync() : void
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         if (false === $filename) {
@@ -594,6 +614,10 @@ class Scheduler implements LoggerAwareInterface {
             return;
         }
         $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        if ($state === false) {
+            $this->logger->critical("Encoding application state failed. {lasterror}", ['lasterror' => json_last_error_msg()]);
+            return;
+        }
         if (!(@file_put_contents($filename, $state) === strlen($state) && rename($filename, $this->saveFileName))) {
             $this->logger->critical("Save state sync failed. {lasterror}", ['lasterror' => json_encode(error_get_last())]);
             return;
@@ -606,7 +630,7 @@ class Scheduler implements LoggerAwareInterface {
      * Scheduling timeouts is only supported when the engine is running in live mode. The Correlation engine will check timeouts for batch mode within the handle() function
      * @throws Exception
      */
-    function scheduleNextTimeout()
+    function scheduleNextTimeout() : void
     {
         /**
          * Cancel current timeout and setup the next
@@ -649,7 +673,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Boot up from a saved state file
      */
-    protected function restoreState()
+    protected function restoreState() : void
     {
         /** Load State from save file */
         $savedState = $this->loadStateFromFile();
@@ -694,7 +718,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Start the Engine
      */
-    public function run()
+    public function run() : void
     {
         if (!$this->isOpcacheEnabled())
         {
@@ -708,22 +732,11 @@ class Scheduler implements LoggerAwareInterface {
         $this->restoreState();
 
         /** Start input processes */
-        foreach ($this->input_processes_config as $id => $config)
-        {
-            $env = $config['env'];
-            /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
-            if (isset($this->input_processes_checkpoints[$id]))
-            {
-                $env = array_merge([static::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
-            }
-            //Use exec to ensure process receives our signals and not the bash wrapper
-            $process = new Process('exec ' . $config['cmd'], $config['wd'], $env);
-            $this->setup_input_process($process, $id);
-            if ($process->isRunning()) {
-                $this->logger->info("Started input process $id");
-                $this->input_processes[$id] = $process;
-            } else {
-                $this->logger->emergency("An input process failed to start, exiting");
+        foreach(array_keys($this->input_processes_config) as $id) {
+            try {
+                $this->start_input_process($id);
+            } catch (RuntimeException $ex) {
+                $this->logger->emergency("An input process failed to start during initialisation.", ['exception' => $ex] );
                 exit(1);
             }
         }
@@ -808,7 +821,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Initialise shutdown by stopping processes and timers
      */
-    public function shutdown() {
+    public function shutdown() : void {
         $this->shuttingDown = true;
         if (null !== $this->nextTimer) {
             $this->loop->cancelTimer($this->nextTimer);
@@ -844,7 +857,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Input processes are stopped. Shutdown any running actions (some may need to be flushed)
      */
-    public function stop()
+    public function stop() : void
     {
         if (null !== $this->shutdownTimer) {
             $this->loop->cancelTimer($this->shutdownTimer);
@@ -936,7 +949,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * @param array $state
      */
-    public function setState(array $state)
+    public function setState(array $state) : void
     {
         $this->input_processes_checkpoints = $state['input']['checkpoints'];
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
