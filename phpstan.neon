@@ -5,3 +5,5 @@ parameters:
         - EdgeTelemetrics\EventCorrelation\IEvent
     dynamicConstantNames:
         - EdgeTelemetrics\EventCorrelation\Scheduler::PRESERVE_FAILED_EVENTS_ONLOAD
+        - EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor::EVENTS
+        - EdgeTelemetrics\EventCorrelation\Rule\Cron::CRON_SCHEDULE

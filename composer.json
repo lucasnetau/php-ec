@@ -24,7 +24,8 @@
     "react/http": "Required for Management server",
     "nikic/fast-route": "Required for Management server",
     "ext-libev": "Use the libev backend to improve performance of the event loop",
-    "ext-libuv": "Use the libuv backend to improve performance of the event loop"
+    "ext-libuv": "Use the libuv backend to improve performance of the event loop",
+    "dragonmantank/cron-expression": "Schedule rules using Cron like expressions"
   },
   "require-dev": {
     "nikic/fast-route": "*",
