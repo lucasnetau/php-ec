@@ -17,7 +17,7 @@ class TriggerException extends Rule {
 
     const EVENTS = [[self::EVENT_MATCH_ANY]];
 
-    public function fire()
+    public function onComplete() : void
     {
         $action = new Action("exception", $this->consumedEvents[0]);
         $this->emit('data', [$action]);
@@ -29,6 +29,7 @@ $rules = [
 ];
 
 define('STATE_FILE', tempnam(sys_get_temp_dir(), 'php-ec-test.'));
+unlink(STATE_FILE);
 
 (new class($rules) extends Scheduler {
     public function __construct(array $rules)

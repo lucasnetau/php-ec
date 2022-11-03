@@ -18,6 +18,7 @@ $rules = [
 ];
 
 define('STATE_FILE', tempnam(sys_get_temp_dir(), 'php-ec-test.'));
+unlink(STATE_FILE);
 
 (new class($rules) extends Scheduler {
     public function __construct(array $rules)

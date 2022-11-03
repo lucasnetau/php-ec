@@ -5,15 +5,19 @@ use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
 use EdgeTelemetrics\JSON_RPC\Error as JsonRpcError;
 
+use Psr\Log\LogLevel;
+use React\EventLoop\Loop;
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
 
 require __DIR__ . '/../../vendor/autoload.php';
 
 disableOutputBuffering();
 
+$logger = new \EdgeTelemetrics\EventCorrelation\JsonRpcLogger(LogLevel::DEBUG);
+
 $log_filename = env('LOG_FILENAME');
 
-$loop = React\EventLoop\Factory::create();
+$loop = Loop::get();
 
 $stream = new EdgeTelemetrics\JSON_RPC\React\Decoder(new \React\Stream\ReadableResourceStream(STDIN, $loop));
 
@@ -31,4 +35,5 @@ $stream->on('data', function (JsonRpcRequest $rpc) use ($log_filename) {
     fwrite(STDOUT, json_encode($response) . "\n");
 });
 
+$logger->info('Logger started');
 $loop->run();
