@@ -28,7 +28,7 @@ use function strpos;
 
 /**
  * PSR-3 logger that logs via a JsonRpc call.
- * Based on MIT Licensed Breg\Logger
+ * Based on MIT Licensed Bref\Logger (2019 Matthieu Napoli)
  */
 class JsonRpcLogger extends AbstractLogger
 {
