@@ -161,6 +161,11 @@ class Scheduler implements LoggerAwareInterface {
     protected float $saveStateSeconds = 1;
 
     /**
+     * @var int Size of the save state file
+     */
+    protected int $saveStateSizeBytes = 0;
+
+    /**
      * Flag for whether we keep failed actions when loading or drop them.
      */
     const PRESERVE_FAILED_EVENTS_ONLOAD = false;
@@ -604,16 +609,19 @@ class Scheduler implements LoggerAwareInterface {
             return;
         }
         $file = $filesystem->file($filename);
-        $file->putContents(json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION))->then(function () use ($file) {
-            $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) {
+        $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        $saveStateSize = strlen($state);
+        $file->putContents($state)->then(function () use ($file, $saveStateSize) {
+            $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) use ($saveStateSize) {
                 //Everything Good
                 $this->asyncSaveInProgress = false;
+                $this->saveStateSizeBytes = $saveStateSize;
             });
         }, function (Exception $ex) use($filename) {
             $this->dirty = true; /** We didn't save state correctly, so we mark the scheduler as dirty to ensure it is attempted again */
             $this->asyncSaveInProgress = false;
-            if (file_exists($filename)) {
-                unlink($filename);
+            if (file_exists($filename) && !unlink($filename)) {
+                $this->logger->warning('Unable to delete temporary save file');
             }
             $this->logger->critical("Save state async failed.", ['exception' => $ex]);
         });
@@ -634,10 +642,15 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->critical("Encoding application state failed. {lasterror}", ['lasterror' => json_last_error_msg()]);
             return;
         }
-        if (!(@file_put_contents($filename, $state) === strlen($state) && rename($filename, $this->saveFileName))) {
+        $saveStateSize = strlen($state);
+        if (!(@file_put_contents($filename, $state) === $saveStateSize && rename($filename, $this->saveFileName))) {
             $this->logger->critical("Save state sync failed. {lasterror}", ['lasterror' => json_encode(error_get_last())]);
+            if (file_exists($filename) && !unlink($filename)) {
+                $this->logger->warning('Unable to delete temporary save file');
+            }
             return;
         }
+        $this->saveStateSizeBytes = $saveStateSize;
 
         $this->logger->debug('State saved to filesystem');
     }
