@@ -39,6 +39,7 @@ use function array_map;
 use function error_get_last;
 use function function_exists;
 use function gettype;
+use function hrtime;
 use function is_array;
 use function json_last_error_msg;
 use function opcache_get_status;
@@ -611,11 +612,16 @@ class Scheduler implements LoggerAwareInterface {
         $file = $filesystem->file($filename);
         $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
         $saveStateSize = strlen($state);
-        $file->putContents($state)->then(function () use ($file, $saveStateSize) {
-            $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) use ($saveStateSize) {
+        $saveStateBegin = hrtime(true);
+        $file->putContents($state)->then(function () use ($file, $saveStateSize, $saveStateBegin) {
+            $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) use ($saveStateSize, $saveStateBegin) {
                 //Everything Good
                 $this->asyncSaveInProgress = false;
                 $this->saveStateSizeBytes = $saveStateSize;
+                $saveStateTime = (hrtime(true) - $saveStateBegin)/1e+6; //Milliseconds
+                if ($saveStateTime > 5000) {
+                    $this->logger->warning('It took ' . round($saveStateTime, 0) . ' milliseconds to save state to disk');
+                }
             });
         }, function (Exception $ex) use($filename) {
             $this->dirty = true; /** We didn't save state correctly, so we mark the scheduler as dirty to ensure it is attempted again */
