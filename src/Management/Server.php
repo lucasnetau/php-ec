@@ -10,6 +10,7 @@ use FastRoute\RouteParser\Std;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\HttpServer;
 use React\Socket\SocketServer;
+use function str_replace;
 
 final class Server {
 
@@ -50,6 +51,6 @@ final class Server {
     }
 
     public function getListeningAddress() {
-        return $this->socketServer->getAddress();
+        return str_replace('tcp://', 'http://', $this->socketServer->getAddress());
     }
 }
