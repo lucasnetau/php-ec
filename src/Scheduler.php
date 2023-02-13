@@ -249,14 +249,15 @@ class Scheduler implements LoggerAwareInterface {
     }
 
     /**
-     * @param string|int $id
-     * @param string $cmd
-     * @param string|null $wd
-     * @param array $env
+     * @param string|int $id Descriptive and unique key of the input process
+     * @param string $cmd Command to execute //@TODO PHP7.4 allows command to be provided as an array
+     * @param string|null $wd Working directory for the process, defaults to current PHP working directory of the Scheduler
+     * @param array $env Key value pair of Environmental variables to pass to the process
+     * @param bool $essential If true, Scheduler will shut everything down if this input process exit with no errorCode or doesn't exist
      */
-    public function register_input_process($id, string $cmd, ?string $wd = null, array $env = []) : void
+    public function register_input_process($id, string $cmd, ?string $wd = null, array $env = [], bool $essential = false) : void
     {
-        $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env];
+        $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'essential' => $essential];
     }
 
     /**
@@ -380,9 +381,19 @@ class Scheduler implements LoggerAwareInterface {
                 $this->logger->critical("Input process $id exit was due to fatal PHP error");
             }
             /** Restart the input process if it exits with an error code EXCEPT if it is exit code 127 - Command Not Found */
-            if (!in_array($code, [0,127], true) && false === $this->shuttingDown) {
-                $this->logger->debug("Restarting process $id");
-                $this->start_input_process($id);
+            if (false === $this->shuttingDown) {
+                if (!in_array($code, [0, 127], true)) {
+                    $this->logger->debug("Restarting process $id");
+                    $this->start_input_process($id);
+                } elseif ($this->input_processes_config[$id]['essential']) {
+                    if ($code === 127) {
+                        $this->logger->info("Essential input process cannot be found. Shutting down");
+                    } else {
+                        $this->logger->info("Essential input process has stopped cleanly. Shutting down");
+                    }
+                    $this->shutdown();
+                    return;
+                }
             }
             /** We stop processing if there are no input processes available **/
             if (0 === count($this->input_processes)) {
