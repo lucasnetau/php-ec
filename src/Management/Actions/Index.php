@@ -46,6 +46,8 @@ class Index {
           <dd>Last Hour {$state['engine']['load']['hour']} eps</dd>
           <dt>Memory Usage</dt>
           <dd>{$this->fn(memory_get_usage())} bytes ({$state['scheduler']['memoryPercentageUsed']}%)</dd>
+          <dt>Save State Size</dt>
+          <dd>{$state['scheduler']['saveFileSizeBytes']} bytes</dd>
         </dl>
         <hr>
         <h2>Input Processes</h2>
