@@ -77,6 +77,9 @@ class Scheduler implements LoggerAwareInterface {
 
     const CHECKPOINT_VARNAME = 'PHPEC_CHECKPOINT';
 
+    /** @var float hrtime for when the scheduler is started */
+    protected float $schedulerStartTime;
+
     /**
      * @var LoopInterface
      */
@@ -257,6 +260,7 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function __construct(array $rules)
     {
+        $this->schedulerStartTime = hrtime(true);
         $this->rules = $rules;
         $this->logger = new NullLogger();
         /** Initialise the Correlation Engine */
@@ -659,9 +663,9 @@ class Scheduler implements LoggerAwareInterface {
                 //Everything Good
                 $this->asyncSaveInProgress = false;
                 $this->saveStateSizeBytes = $saveStateSize;
-                $this->saveStateLastDuration = (hrtime(true) - $saveStateBegin)/1e+6; //Milliseconds
+                $this->saveStateLastDuration = (int)round((hrtime(true) - $saveStateBegin)/1e+6); //Milliseconds
                 if ($this->saveStateLastDuration > 5000) {
-                    $this->logger->warning('It took ' . round($this->saveStateLastDuration, 0) . ' milliseconds to save state to disk');
+                    $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save state to disk');
                 }
             });
         }, function (Exception $ex) use($filename) {
@@ -670,7 +674,9 @@ class Scheduler implements LoggerAwareInterface {
             if (file_exists($filename) && !unlink($filename)) {
                 $this->logger->warning('Unable to delete temporary save file');
             }
-            $this->logger->critical("Save state async failed.", ['exception' => $ex]);
+            if ($this->shuttingDown === false) { //Failure is expected if the save handler is running when the scheduler starts shutting down. A sync save state will be run at end of shutdown
+                $this->logger->critical("Save state async failed.", ['exception' => $ex]);
+            }
         });
     }
 
@@ -804,6 +810,9 @@ class Scheduler implements LoggerAwareInterface {
         $this->loop = Loop::get();
         $this->logger->debug("Using event loop implementation: {class}", ['class' => get_class($this->loop)]);
 
+        /** Initialise the management server early in the startup */
+        $this->initialiseManagementServer();
+
         /** Restore the state of the scheduler and engine */
         $this->restoreState();
 
@@ -890,9 +899,6 @@ class Scheduler implements LoggerAwareInterface {
             gc_mem_caches();
             $this->saveStateSync();
         });
-
-        /** Initialise the management server */
-        $this->initialiseManagementServer();
 
         /** GO! */
         $this->loop->run();
@@ -1015,6 +1021,7 @@ class Scheduler implements LoggerAwareInterface {
     protected function getState() : array
     {
         $state = [];
+        $state['uptime_msec'] = (int)round((hrtime(true) - $this->schedulerStartTime)/1e+6);
         $state['input']['running'] = array_keys($this->input_processes);
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
         $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
@@ -1046,7 +1053,15 @@ class Scheduler implements LoggerAwareInterface {
             }
         }
         if (true === static::PRESERVE_FAILED_EVENTS_ONLOAD) {
-            $this->erroredActionCommands = array_merge($state['actions']['inflight'], $state['actions']['errored']);
+            $this->erroredActionCommands = $state['actions']['errored'];
+            unset($state['actions']['errored']);
+            while(count($state['actions']['inflight'])) {
+                $inflight = array_shift($state['actions']['inflight']);
+                $this->erroredActionCommands[] = [
+                    'error' => 'Inflight when process exited',
+                    'action' => $inflight,
+                ];
+            }
         }
     }
 
