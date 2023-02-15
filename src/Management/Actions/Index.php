@@ -37,7 +37,7 @@ class Index {
           <dt>Start Time</dt>
           <dd>{$start_time->format('c')}</dd>
           <dt>Uptime</dt>
-          <dd>{$this->time_ago($start_time->getTimestamp())}</dd>
+          <dd>{$this->time_ago($state['scheduler']['uptime_msec'])}</dd>
           <dt>Last Processed Event</dt>
           <dd>{$state['engine']['load']['lastEvent']} ({$this->fn(time() - strtotime($state['engine']['load']['lastEvent']))} seconds ago)</dd>
           <dt>Events Per Second</dt>
@@ -48,6 +48,8 @@ class Index {
           <dd>{$this->fn(memory_get_usage())} bytes ({$state['scheduler']['memoryPercentageUsed']}%)</dd>
           <dt>Save State Size</dt>
           <dd>{$state['scheduler']['saveFileSizeBytes']} bytes</dd>
+          <dt>Time taken to write last save state to disk</dt>
+          <dd>{$state['scheduler']['saveStateLastDuration']} milliseconds</dd>
         </dl>
         <hr>
         <h2>Input Processes</h2>
@@ -78,8 +80,8 @@ EOT;
     /**
      * Calculate a human readable time ago string
      */
-    protected function time_ago(int $timestamp) : string {
-        $num = time() - $timestamp;
+    protected function time_ago(int $time_msec) : string {
+        $num = intdiv($time_msec,1000);
         $calc = [];
         $calc['secs'] = fmod($num, 60);
         $num = intdiv($num, 60);
