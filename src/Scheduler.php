@@ -36,6 +36,7 @@ use function array_filter;
 use function array_key_first;
 use function array_keys;
 use function array_map;
+use function array_shift;
 use function error_get_last;
 use function function_exists;
 use function gettype;
@@ -166,10 +167,13 @@ class Scheduler implements LoggerAwareInterface {
      */
     protected int $saveStateSizeBytes = 0;
 
+    /** @var int Time in millisecond for last save handler to complete */
+    protected int $saveStateLastDuration = 0;
+
     /**
      * Flag for whether we keep failed actions when loading or drop them.
      */
-    const PRESERVE_FAILED_EVENTS_ONLOAD = false;
+    const PRESERVE_FAILED_EVENTS_ONLOAD = true;
 
     /**
      * Event type when we start the engine up with no previous state.
@@ -231,6 +235,11 @@ class Scheduler implements LoggerAwareInterface {
     /** @var int Counter of how many times we have hit the memory HIGH WATERMARK during execution, a high number suggested that memory resources or limit should be increased */
     protected int $pausedOnMemoryPressureCount = 0;
 
+    /**
+     * @var bool Flag if we are replaying failed actions
+     */
+    protected bool $errorRecovery = false;
+
     /** @var bool Flag to track if we are shutting down the engine */
     protected bool $shuttingDown = false;
 
@@ -264,6 +273,21 @@ class Scheduler implements LoggerAwareInterface {
     public function register_input_process($id, string $cmd, ?string $wd = null, array $env = [], bool $essential = false) : void
     {
         $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'essential' => $essential];
+    }
+
+    /**
+     * @return void
+     */
+    public function initialise_input_processes() : void {
+        $this->logger->debug('Initialising input processes');
+        foreach (array_keys($this->input_processes_config) as $id) {
+            try {
+                $this->start_input_process($id);
+            } catch (RuntimeException $ex) {
+                $this->logger->emergency("An input process failed to start during initialisation.", ['exception' => $ex]);
+                exit(1);
+            }
+        }
     }
 
     /**
@@ -471,10 +495,21 @@ class Scheduler implements LoggerAwareInterface {
                         unset($this->inflightActionCommands[$rpc->getId()]);
 
                         $this->logger->error($rpc->getError()->getMessage() . " : " . json_encode($rpc->getError()->getData()));
+
+                        if ($this->errorRecovery === true) {
+                            $this->logger->critical('An action process failed again during recovery');
+                            $this->shutdown();
+                        }
                     }
                     /** Release memory used by the inflight action table */
                     if (count($this->inflightActionCommands) === 0) {
                         $this->inflightActionCommands = [];
+
+                        if ($this->errorRecovery === true) {
+                            $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
+                            $this->errorRecovery = false;
+                            $this->initialise_input_processes();
+                        }
                     }
                     $this->dirty = true;
                 } elseif ($rpc instanceof JsonRpcNotification) {
@@ -505,14 +540,20 @@ class Scheduler implements LoggerAwareInterface {
                     if (null !== $pid)
                     {
                         $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
+                        $terminatedMessage =  "Action process terminated unexpectedly " . (($term === null) ? "with code: $code" : "on signal: $term");
                         foreach($terminatedActions as $rpcId => $action) {
                             $error = [
-                                'error' => "Action process terminated unexpectedly with code $code",
+                                'error' => $terminatedMessage,
                                 'action' => $action['action'],
                             ];
                             $this->erroredActionCommands[] = $error;
                             unset($this->inflightActionCommands[$rpcId]);
                         }
+                    }
+
+                    if ($this->errorRecovery === true) {
+                        $this->logger->critical('An action process failed again during recovery');
+                        $this->shutdown();
                     }
                 }
                 unset($this->runningActions[$actionName]);
@@ -618,9 +659,9 @@ class Scheduler implements LoggerAwareInterface {
                 //Everything Good
                 $this->asyncSaveInProgress = false;
                 $this->saveStateSizeBytes = $saveStateSize;
-                $saveStateTime = (hrtime(true) - $saveStateBegin)/1e+6; //Milliseconds
-                if ($saveStateTime > 5000) {
-                    $this->logger->warning('It took ' . round($saveStateTime, 0) . ' milliseconds to save state to disk');
+                $this->saveStateLastDuration = (hrtime(true) - $saveStateBegin)/1e+6; //Milliseconds
+                if ($this->saveStateLastDuration > 5000) {
+                    $this->logger->warning('It took ' . round($this->saveStateLastDuration, 0) . ' milliseconds to save state to disk');
                 }
             });
         }, function (Exception $ex) use($filename) {
@@ -668,7 +709,7 @@ class Scheduler implements LoggerAwareInterface {
     function scheduleNextTimeout() : void
     {
         /**
-         * Cancel current timeout and setup the next
+         * Cancel current timeout and set up the next one
          */
         if (null !== $this->nextTimer) {
             $this->loop->cancelTimer($this->nextTimer);
@@ -726,7 +767,7 @@ class Scheduler implements LoggerAwareInterface {
         }
         unset($savedState);
 
-        /** Force a run of the PHP GC and release caches. This helps clearing out memory consumed by restoring state from a large json file */
+        /** Force a run of the PHP GC and release caches. This helps clear out memory consumed by restoring state from a large json file */
         gc_collect_cycles();
         gc_mem_caches();
 
@@ -766,16 +807,6 @@ class Scheduler implements LoggerAwareInterface {
         /** Restore the state of the scheduler and engine */
         $this->restoreState();
 
-        /** Start input processes */
-        foreach(array_keys($this->input_processes_config) as $id) {
-            try {
-                $this->start_input_process($id);
-            } catch (RuntimeException $ex) {
-                $this->logger->emergency("An input process failed to start during initialisation.", ['exception' => $ex] );
-                exit(1);
-            }
-        }
-
         /**
          * An event has been emitted by a Rule
          * If the Scheduler has been configured to persist new events via setting newEventAction then we wrap this in the defined Action and emit it via the Engine,
@@ -812,6 +843,20 @@ class Scheduler implements LoggerAwareInterface {
                 $this->logger->error("Unable to start unknown action " . json_encode($action));
             }
         });
+
+        /** If we have any errored actions then we replay them and attempt recovery. In normal state we initialise the input processes */
+        if (count($this->erroredActionCommands)) {
+            $this->logger->notice('Beginning failed action recovery process');
+            $this->errorRecovery = true;
+            while(count($this->erroredActionCommands) > 0) {
+                $errored = array_shift($this->erroredActionCommands);
+                $action = new Action($errored['action']['cmd'], $errored['action']['vars']);
+                $this->engine->emit('action', [$action]);
+            }
+            $this->erroredActionCommands = [];
+        } else {
+            $this->initialise_input_processes();
+        }
 
         /** Initialise the state saving task */
         $this->setup_save_state();
@@ -951,12 +996,12 @@ class Scheduler implements LoggerAwareInterface {
         {
             $contents = file_get_contents($this->saveFileName);
             if ($contents === false || $contents === '') {
-                $this->logger->critical('State file exists but contents could not be read or were empty');
+                $this->logger->critical('State file exists but contents could not be read or were empty. Exiting');
                 exit(1);
             }
             $state = json_decode($contents, true);
             if ($state === null) {
-                $this->logger->critical('Save state file was corrupted. JSON Error: ' . json_last_error_msg() );
+                $this->logger->critical('Save state file was corrupted, Exiting. JSON Error: ' . json_last_error_msg() );
                 exit(1);
             }
             return $state;
@@ -978,6 +1023,7 @@ class Scheduler implements LoggerAwareInterface {
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
         $state['saveFileSizeBytes'] = $this->saveStateSizeBytes;
+        $state['saveStateLastDuration'] = $this->saveStateLastDuration;
         //@TODO add a clean shutdown flag here in save state
         return $state;
     }
@@ -990,11 +1036,11 @@ class Scheduler implements LoggerAwareInterface {
         $this->input_processes_checkpoints = $state['input']['checkpoints'];
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
         /** @TODO, this could be a big array, we need to handle that in a memory sensitive way */
-        /** @TODO - Replay any errored actions, then replay any inflight actions recorded. If these fail then we should thrown an error and exit. Ensure no dataloss */
-        if (count($state['actions']['errored']) > 0)
+        $erroredCount = count($state['actions']['errored']);
+        if ($erroredCount > 0)
         {
-            $this->logger->warning("Failed actions detected from previous execution");
-            if (count($state['actions']['errored']) > 50)
+            $this->logger->warning("$erroredCount failed actions detected from previous execution");
+            if ($erroredCount > 50)
             {
                 $this->logger->warning("Large number of failed actions. Memory consumption for state table may be large.");
             }
