@@ -9,6 +9,7 @@ use LogicException;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\Message\Response;
 use function class_exists;
+use function error_log;
 use function is_callable;
 use function is_string;
 
@@ -41,7 +42,12 @@ final class Router
                     }
                 }
 
-                return $handler($request, ... array_values($params));
+                try {
+                    return $handler($request, ... array_values($params));
+                } catch (\Throwable $ex) {
+                    error_log('An exception was thrown when rendering administration page.' . $ex->getMessage());
+                    return new Response(500, ['Content-Type' => 'text/html'], 'An error has occurred');
+                }
         }
 
         throw new LogicException('Something wrong with routing');
