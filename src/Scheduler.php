@@ -13,6 +13,8 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
+use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
+use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use Exception;
 use Psr\Log\LoggerAwareInterface;
@@ -28,8 +30,6 @@ use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
 use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
-use React\Filesystem\Filesystem;
-use React\Filesystem\FilesystemInterface;
 use RuntimeException;
 
 use function array_filter;
@@ -37,30 +37,20 @@ use function array_key_first;
 use function array_keys;
 use function array_map;
 use function array_shift;
-use function error_get_last;
 use function function_exists;
 use function gettype;
 use function hrtime;
 use function is_array;
-use function json_last_error_msg;
 use function opcache_get_status;
-use function strlen;
-use function tempnam;
 use function json_encode;
-use function json_decode;
 use function memory_get_usage;
 use function count;
-use function file_exists;
-use function file_put_contents;
-use function file_get_contents;
-use function rename;
 use function get_class;
 use function gc_collect_cycles;
 use function gc_mem_caches;
 use function array_merge;
 use function mt_rand;
 use function trim;
-use function unlink;
 
 use const SIGINT;
 use const SIGTERM;
@@ -141,9 +131,12 @@ class Scheduler implements LoggerAwareInterface {
     protected array $erroredActionCommands = [];
 
     /**
-     * @var TimerInterface Reference to the periodic task to save state.
+     * @var TimerInterface[] Scheduled tasks for the scheduler
      */
-    protected TimerInterface $saveHandler;
+    protected array $scheduledTasks = [];
+
+    /** @var SaveHandlerInterface */
+    protected SaveHandlerInterface $saveStateHandler;
 
     /**
      * @var string Filename to save state to
@@ -156,22 +149,9 @@ class Scheduler implements LoggerAwareInterface {
     protected bool $dirty;
 
     /**
-     * @var bool Flag to ensure we only have one save going on at a time
-     */
-    protected bool $asyncSaveInProgress = false;
-
-    /**
      * @var float How ofter to save state
      */
     protected float $saveStateSeconds = 1;
-
-    /**
-     * @var int Size of the save state file
-     */
-    protected int $saveStateSizeBytes = 0;
-
-    /** @var int Time in millisecond for last save handler to complete */
-    protected int $saveStateLastDuration = 0;
 
     /**
      * Flag for whether we keep failed actions when loading or drop them.
@@ -601,9 +581,15 @@ class Scheduler implements LoggerAwareInterface {
         /**
          * Set up a time to save the state of the correlation engine every saveStateSeconds
          */
-        $filesystem = Filesystem::create($this->loop);
-        $this->saveHandler = $this->loop->addPeriodicTimer($this->saveStateSeconds, function() use ($filesystem) {
-            if (($this->engine->isDirty() || $this->dirty) && false === $this->asyncSaveInProgress)
+        $this->saveStateHandler->on('save:failed', function($arguments) {
+            $this->dirty = true;
+            if ($this->shuttingDown === false) { //Failure is expected if the save handler is running when the scheduler starts shutting down. A sync save state will be run at end of shutdown
+                $this->logger->critical("Save state async failed.", ['exception' => $arguments['exception']]);
+            }
+        });
+
+        $this->scheduledTasks[] = $this->loop->addPeriodicTimer($this->saveStateSeconds, function() {
+            if (($this->engine->isDirty() || $this->dirty) && false === $this->saveStateHandler->asyncSaveInProgress())
             {
                 /** Clear the dirty flags before calling the async save process.
                  * This ensures that changes that occur between now and the save file
@@ -611,16 +597,14 @@ class Scheduler implements LoggerAwareInterface {
                  */
                 $this->engine->clearDirtyFlag();
                 $this->dirty = false;
-                $this->asyncSaveInProgress = true;
-                $this->saveStateAsync($filesystem);
+                $this->saveStateHandler->saveStateAsync($this->buildState());
             }
         });
 
         /** Set up an hourly time to save state (or skip if we are already saving state when this timer fires) */
-        $this->loop->addPeriodicTimer(3600, function() use ($filesystem) {
-            if (false === $this->asyncSaveInProgress) {
-                $this->asyncSaveInProgress = true;
-                $this->saveStateAsync($filesystem);
+        $this->scheduledTasks[] = $this->loop->addPeriodicTimer(3600, function() {
+            if (false === $this->saveStateHandler->asyncSaveInProgress()) {
+                $this->saveStateHandler->saveStateAsync($this->buildState());
             }
         });
     }
@@ -641,71 +625,6 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function setSaveStateInterval(float $seconds) : void {
         $this->saveStateSeconds = $seconds;
-    }
-
-    /**
-     * Save the current system state in an async manner
-     * @param FilesystemInterface $filesystem
-     */
-    public function saveStateAsync(FilesystemInterface $filesystem) : void
-    {
-        $filename = tempnam("/tmp", ".php-ce.state.tmp");
-        if (false === $filename) {
-            $this->logger->critical("Error creating temporary save state file, check filesystem");
-            return;
-        }
-        $file = $filesystem->file($filename);
-        $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
-        $saveStateSize = strlen($state);
-        $saveStateBegin = hrtime(true);
-        $file->putContents($state)->then(function () use ($file, $saveStateSize, $saveStateBegin) {
-            $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) use ($saveStateSize, $saveStateBegin) {
-                //Everything Good
-                $this->asyncSaveInProgress = false;
-                $this->saveStateSizeBytes = $saveStateSize;
-                $this->saveStateLastDuration = (int)round((hrtime(true) - $saveStateBegin)/1e+6); //Milliseconds
-                if ($this->saveStateLastDuration > 5000) {
-                    $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save state to disk');
-                }
-            });
-        }, function (Exception $ex) use($filename) {
-            $this->dirty = true; /** We didn't save state correctly, so we mark the scheduler as dirty to ensure it is attempted again */
-            $this->asyncSaveInProgress = false;
-            if (file_exists($filename) && !unlink($filename)) {
-                $this->logger->warning('Unable to delete temporary save file');
-            }
-            if ($this->shuttingDown === false) { //Failure is expected if the save handler is running when the scheduler starts shutting down. A sync save state will be run at end of shutdown
-                $this->logger->critical("Save state async failed.", ['exception' => $ex]);
-            }
-        });
-    }
-
-    /**
-     * Save the current state in a synchronous manner
-     */
-    public function saveStateSync() : void
-    {
-        $filename = tempnam("/tmp", ".php-ce.state.tmp");
-        if (false === $filename) {
-            $this->logger->critical("Error creating temporary save state file, check filesystem");
-            return;
-        }
-        $state = json_encode($this->buildState(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
-        if ($state === false) {
-            $this->logger->critical("Encoding application state failed. {lasterror}", ['lasterror' => json_last_error_msg()]);
-            return;
-        }
-        $saveStateSize = strlen($state);
-        if (!(@file_put_contents($filename, $state) === $saveStateSize && rename($filename, $this->saveFileName))) {
-            $this->logger->critical("Save state sync failed. {lasterror}", ['lasterror' => json_encode(error_get_last())]);
-            if (file_exists($filename) && !unlink($filename)) {
-                $this->logger->warning('Unable to delete temporary save file');
-            }
-            return;
-        }
-        $this->saveStateSizeBytes = $saveStateSize;
-
-        $this->logger->debug('State saved to filesystem');
     }
 
     /**
@@ -758,7 +677,12 @@ class Scheduler implements LoggerAwareInterface {
     protected function restoreState() : void
     {
         /** Load State from save file */
-        $savedState = $this->loadStateFromFile();
+        try {
+            $savedState = $this->saveStateHandler->loadState();
+        } catch (RuntimeException $ex) {
+            $this->logger->critical($ex->getMessage());
+            exit(1);
+        }
         $restoring = $savedState !== false;
 
         if ($restoring) {
@@ -814,6 +738,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->initialiseManagementServer();
 
         /** Restore the state of the scheduler and engine */
+        $this->saveStateHandler = new FileAdapter('/tmp', $this->saveFileName, $this->logger, $this->loop);
         $this->restoreState();
 
         /**
@@ -897,7 +822,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->debug("SIGHUP received, clearing caches and saving non-dirty state");
             gc_collect_cycles();
             gc_mem_caches();
-            $this->saveStateSync();
+            $this->saveStateHandler->saveStateSync($this->buildState());
         });
 
         /** GO! */
@@ -914,8 +839,8 @@ class Scheduler implements LoggerAwareInterface {
             $this->nextTimer = null;
         }
 
-        if (null !== $this->saveHandler) {
-            $this->loop->cancelTimer($this->saveHandler);
+        while ($task = array_pop($this->scheduledTasks)) {
+            $this->loop->cancelTimer($task);
         }
 
         if (count($this->input_processes) > 0) {
@@ -989,30 +914,8 @@ class Scheduler implements LoggerAwareInterface {
             }
             $this->loop->stop();
             $this->logger->debug("Event Loop stopped");
-            $this->saveStateSync(); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
+            $this->saveStateHandler->saveStateSync($this->buildState()); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
         });
-    }
-
-    /**
-     * @return false|array
-     */
-    public function loadStateFromFile()
-    {
-        if (file_exists($this->saveFileName))
-        {
-            $contents = file_get_contents($this->saveFileName);
-            if ($contents === false || $contents === '') {
-                $this->logger->critical('State file exists but contents could not be read or were empty. Exiting');
-                exit(1);
-            }
-            $state = json_decode($contents, true);
-            if ($state === null) {
-                $this->logger->critical('Save state file was corrupted, Exiting. JSON Error: ' . json_last_error_msg() );
-                exit(1);
-            }
-            return $state;
-        }
-        return false;
     }
 
     /**
@@ -1029,8 +932,8 @@ class Scheduler implements LoggerAwareInterface {
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
-        $state['saveFileSizeBytes'] = $this->saveStateSizeBytes;
-        $state['saveStateLastDuration'] = $this->saveStateLastDuration;
+        $state['saveFileSizeBytes'] = $this->saveStateHandler->lastSaveSizeBytes();
+        $state['saveStateLastDuration'] = $this->saveStateHandler->lastSaveWriteDuration();
         //@TODO add a clean shutdown flag here in save state
         return $state;
     }
