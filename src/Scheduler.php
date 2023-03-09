@@ -173,6 +173,11 @@ class Scheduler implements LoggerAwareInterface {
      */
     const CONTROL_MSG_STOP = 'PHP-EC:Engine:Stop';
 
+    /**
+     * Event type when the heartbeat time goes off
+     */
+    const CONTROL_MSG_HEARTBEAT = 'PHP-EC:Engine:Heartbeat';
+
     /** @var int Level at which the memory pressure is considered resolved */
     const MEMORY_PRESSURE_LOW_WATERMARK = 35;
 
@@ -234,6 +239,11 @@ class Scheduler implements LoggerAwareInterface {
 
     /** @var null|Server */
     protected ?Server $managementServer = null;
+
+    /**
+     * @var int Number of seconds between heartbeats or 0 to disable
+     */
+    protected int $heartbeat_seconds = 0;
 
     /**
      * @param array<class-string<IEventMatcher>> $rules An array of Rules defined by classNames
@@ -588,7 +598,7 @@ class Scheduler implements LoggerAwareInterface {
             }
         });
 
-        $this->scheduledTasks[] = $this->loop->addPeriodicTimer($this->saveStateSeconds, function() {
+        $this->scheduledTasks['scheduledSaveState'] = $this->loop->addPeriodicTimer($this->saveStateSeconds, function() {
             if (($this->engine->isDirty() || $this->dirty) && false === $this->saveStateHandler->asyncSaveInProgress())
             {
                 /** Clear the dirty flags before calling the async save process.
@@ -602,8 +612,10 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         /** Set up an hourly time to save state (or skip if we are already saving state when this timer fires) */
-        $this->scheduledTasks[] = $this->loop->addPeriodicTimer(3600, function() {
+        $this->scheduledTasks['hourlySaveState'] = $this->loop->addPeriodicTimer(3600, function() {
             if (false === $this->saveStateHandler->asyncSaveInProgress()) {
+                $this->engine->clearDirtyFlag();
+                $this->dirty = false;
                 $this->saveStateHandler->saveStateAsync($this->buildState());
             }
         });
@@ -625,6 +637,14 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function setSaveStateInterval(float $seconds) : void {
         $this->saveStateSeconds = $seconds;
+    }
+
+    /**
+     * @param int $seconds
+     * @return void
+     */
+    public function setHeartbeatInterval(int $seconds) : void {
+        $this->heartbeat_seconds = $seconds;
     }
 
     /**
@@ -794,6 +814,13 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Initialise the state saving task */
         $this->setup_save_state();
+
+        /** Initialise Heartbeat timer */
+        if ($this->heartbeat_seconds > 0) {
+            $this->scheduledTasks['heartbeat'] = $this->loop->addPeriodicTimer($this->heartbeat_seconds, function() {
+                $this->engine->handle(new Event(['event' => static::CONTROL_MSG_HEARTBEAT]));
+            });
+        }
 
         /** Monitor memory usage */
         $sysInfo = new SysInfo();
