@@ -36,11 +36,18 @@ use function array_filter;
 use function array_key_first;
 use function array_keys;
 use function array_map;
+use function array_pop;
 use function array_shift;
 use function function_exists;
+use function gc_enable;
+use function gc_enabled;
 use function gettype;
 use function hrtime;
+use function in_array;
 use function is_array;
+use function max;
+use function memory_get_peak_usage;
+use function number_format;
 use function opcache_get_status;
 use function json_encode;
 use function memory_get_usage;
@@ -50,6 +57,7 @@ use function gc_collect_cycles;
 use function gc_mem_caches;
 use function array_merge;
 use function mt_rand;
+use function round;
 use function trim;
 
 use const SIGINT;
@@ -217,9 +225,6 @@ class Scheduler implements LoggerAwareInterface {
     /** @var bool Flag tracking if we have paused dispatching */
     protected bool $pausedOnMemoryPressure = false;
 
-    /** @var TimerInterface|null Timer used to ensure that we don't get stuck doing nothing if all actions complete but memory pressure stays above the high watermark */
-    protected ?TimerInterface $pausedOnMemoryPressureTimeout = null;
-
     /** @var int Counter of how many times we have hit the memory HIGH WATERMARK during execution, a high number suggested that memory resources or limit should be increased */
     protected int $pausedOnMemoryPressureCount = 0;
 
@@ -285,10 +290,10 @@ class Scheduler implements LoggerAwareInterface {
     }
 
     /**
-     * @param string|int $id
+     * @param int|string $id
      * @return Process
      */
-    public function start_input_process($id) : Process {
+    public function start_input_process(int|string $id) : Process {
         if (isset($this->input_processes[$id])) {
             $this->logger->critical('Input process ' . $id . ' already running');
             return $this->input_processes[$id];
@@ -315,7 +320,7 @@ class Scheduler implements LoggerAwareInterface {
      * @param Process $process
      * @param int|string $id
      */
-    public function setup_input_process(Process $process, $id) {
+    public function setup_input_process(Process $process, int|string $id) {
         try {
             $process->start($this->loop);
         } catch (RuntimeException $exception) {
@@ -718,8 +723,7 @@ class Scheduler implements LoggerAwareInterface {
         unset($savedState);
 
         /** Force a run of the PHP GC and release caches. This helps clear out memory consumed by restoring state from a large json file */
-        gc_collect_cycles();
-        gc_mem_caches();
+        $this->memoryReclaim();
 
         /** Inject some synthetic events in to the engine to flag that the engine is starting for the first time or restoring
          * Rules can handle these events for initialisation purposes (handy for setting up rules that detect when an event is missing)
@@ -748,7 +752,12 @@ class Scheduler implements LoggerAwareInterface {
     {
         if (!$this->isOpcacheEnabled())
         {
-            $this->logger->warning("Opcache is not enabled. This will reduce performance and increase memory usage");
+            $this->logger->warning("*** Opcache is not enabled. This will reduce performance and increase memory usage ***");
+        }
+
+        if (!gc_enabled()) {
+            gc_enable();
+            $this->logger->info("Garbage collection enabled at runtime");
         }
 
         $this->loop = Loop::get();
@@ -847,8 +856,7 @@ class Scheduler implements LoggerAwareInterface {
              * Force a run of the PHP GC and release caches.
              */
             $this->logger->debug("SIGHUP received, clearing caches and saving non-dirty state");
-            gc_collect_cycles();
-            gc_mem_caches();
+            $this->memoryReclaim();
             $this->saveStateHandler->saveStateSync($this->buildState());
         });
 
@@ -1019,8 +1027,7 @@ class Scheduler implements LoggerAwareInterface {
             /** Running this every check cycle negatively impacts the scheduler's performance,
              *  however since we are paused (or going to pause) at this stage, and are awaiting the external action processes to complete the actual impact will be minimal
              */
-            gc_collect_cycles();
-            gc_mem_caches();
+            $this->memoryReclaim();
             $current_memory_usage = memory_get_usage();
             $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
         }
@@ -1046,7 +1053,7 @@ class Scheduler implements LoggerAwareInterface {
             ++$this->pausedOnMemoryPressureCount;
 
             /** @TODO take into account delaying shutdown if we still have some outstanding actions and memory usage is dropping */
-            $this->pausedOnMemoryPressureTimeout = $this->loop->addTimer(300, function() {
+            $this->scheduledTasks['pausedOnMemoryPressureTimer'] = $this->loop->addTimer(300, function() {
                 if ($this->pausedOnMemoryPressure) {
                     $this->logger->critical("Timeout! Input processes are still paused, shutting down");
                     $this->shutdown();
@@ -1060,9 +1067,9 @@ class Scheduler implements LoggerAwareInterface {
                 count($this->inflightActionCommands) < static::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
 
                 //Cancel the memory pressure timout
-                if ($this->pausedOnMemoryPressureTimeout !== null) {
-                    $this->loop->cancelTimer($this->pausedOnMemoryPressureTimeout);
-                    $this->pausedOnMemoryPressureTimeout = null;
+                if ($this->scheduledTasks['pausedOnMemoryPressureTimer'] !== null) {
+                    $this->loop->cancelTimer($this->scheduledTasks['pausedOnMemoryPressureTimer']);
+                    unset($this->scheduledTasks['pausedOnMemoryPressureTimer']);
                 }
                 //Resume input
                 foreach ($this->input_processes as $processId => $process) {
@@ -1071,6 +1078,22 @@ class Scheduler implements LoggerAwareInterface {
                 }
                 $this->pausedOnMemoryPressure = false;
             }
+        }
+    }
+
+    /**
+     * Run memory reclaim
+     */
+    protected function memoryReclaim() {
+        $mark = hrtime(true);
+        $memCurr = memory_get_usage();
+        $cycles = gc_collect_cycles();
+        $bytes = gc_mem_caches();
+        $saved = max(0, $memCurr - memory_get_usage()); //Don't show a negative value if we don't release anything
+        $time = (int)round((hrtime(true)-$mark)/1e+3);
+        $this->logger->debug("GC Run Complete in $time μs {cycles: $cycles, reclaim: $bytes, reduced: $saved bytes, current: " . round(memory_get_usage() / 1048576,2) . "MB, max: " . round(memory_get_peak_usage() / 1048576,2) ."MB}");
+        if (function_exists('memory_reset_peak_usage')) {
+            \memory_reset_peak_usage();
         }
     }
 
