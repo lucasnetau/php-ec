@@ -250,6 +250,9 @@ class Scheduler implements LoggerAwareInterface {
      */
     protected int $heartbeat_seconds = 0;
 
+    /** @var int Seconds to delay before the first heartbeat is sent */
+    private int $heartbeat_initialDelay = 0;
+
     /**
      * @param array<class-string<IEventMatcher>> $rules An array of Rules defined by classNames
      */
@@ -646,10 +649,12 @@ class Scheduler implements LoggerAwareInterface {
 
     /**
      * @param int $seconds
+     * @param int $initialDelay
      * @return void
      */
-    public function setHeartbeatInterval(int $seconds) : void {
+    public function setHeartbeatInterval(int $seconds, int $initialDelay = 0) : void {
         $this->heartbeat_seconds = $seconds;
+        $this->heartbeat_initialDelay = $initialDelay;
     }
 
     /**
@@ -826,9 +831,18 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Initialise Heartbeat timer */
         if ($this->heartbeat_seconds > 0) {
-            $this->scheduledTasks['heartbeat'] = $this->loop->addPeriodicTimer($this->heartbeat_seconds, function() {
+            $cb = function() {
                 $this->engine->handle(new Event(['event' => static::CONTROL_MSG_HEARTBEAT]));
-            });
+            };
+            if ($this->heartbeat_initialDelay === 0) {
+                //No delay, schedule straight away
+                $this->scheduledTasks['heartbeat'] = $this->loop->addPeriodicTimer($this->heartbeat_seconds, $cb);
+            } else {
+                //Delay in starting heartbeats, use a timer to set the future periodic timer
+                $this->loop->addTimer($this->heartbeat_initialDelay, function() use ($cb) {
+                    $this->scheduledTasks['heartbeat'] = $this->loop->addPeriodicTimer($this->heartbeat_seconds, $cb);
+                });
+            }
         }
 
         /** Monitor memory usage */
