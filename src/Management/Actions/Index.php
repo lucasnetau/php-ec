@@ -6,8 +6,13 @@ use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\Message\Response;
+use function array_keys;
+use function array_map;
 use function array_reverse;
+use function array_values;
 use function count;
+use function implode;
+use function sprintf;
 
 class Index {
 
@@ -22,6 +27,38 @@ class Index {
         $start_time = new DateTimeImmutable('@' . $_SERVER['REQUEST_TIME']);
 
         $input_process_list = '<li>' . implode('</li><li>', $state['scheduler']['input']['running']) . '</li>';
+
+        $opcache_status = opcache_get_status(false);
+
+        if ($opcache_status === false) {
+            $opcache_html = '<p style="color: red">Disabled</p>';
+        } else {
+            $opcache_html = <<<EOH
+                <dl>
+                    <dt>Opcache Enabled</dt>
+                    <dd>{$opcache_status['opcache_enabled']}</dd>
+                    <dt>Cache Full</dt>
+                    <dd>{$this->fn($opcache_status['cache_full'] ? 'Yes' : 'No')}</dd>
+                    <dt>Restart Pending</dt>
+                    <dd>{$this->fn($opcache_status['restart_pending'] ? 'Yes' : 'No')}</dd>
+                    <dt>Restart in Progress</dt>
+                    <dd>{$this->fn($opcache_status['restart_in_progress'] ? 'Yes' : 'No')}</dd>
+                    <dt>Wasted Memory Percentage</dt>
+                    <dd>{$this->fn(round($opcache_status['memory_usage']['current_wasted_percentage'], 2) . '%')}</dd>
+                    <dt>Free Memory</dt>
+                    <dd>{$this->formatMemory($opcache_status['memory_usage']['free_memory'])}</dd>
+                    <dt>Used Memory</dt>
+                    <dd>{$this->formatMemory($opcache_status['memory_usage']['used_memory'])}</dd>
+                    <dt>Wasted Memory</dt>
+                    <dd>{$this->formatMemory($opcache_status['memory_usage']['wasted_memory'])}</dd>
+                    <dt>Interned Strings Usage</dt>
+                    <dd>{$this->fn(implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['interned_strings_usage']), array_values($opcache_status['interned_strings_usage']))))}</dd>
+                    <dt>Opcache Statistics</dt>
+                    <dd>{$this->fn(implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['opcache_statistics']), array_values($opcache_status['opcache_statistics']))))}</dd>
+                </dl>
+EOH;
+
+        }
 
         $body = <<<EOT
 <!DOCTYPE HTML>
@@ -45,7 +82,7 @@ class Index {
           <dd>Last 15 Minutes {$state['engine']['load']['fifteen']} eps</dd>
           <dd>Last Hour {$state['engine']['load']['hour']} eps</dd>
           <dt>Memory Usage</dt>
-          <dd>{$this->fn(memory_get_usage())} bytes ({$state['scheduler']['memoryPercentageUsed']}%)</dd>
+          <dd>{$this->formatMemory(memory_get_usage())} ({$state['scheduler']['memoryPercentageUsed']}%)</dd>
           <dt>Save State Size</dt>
           <dd>{$state['scheduler']['saveFileSizeBytes']} bytes</dd>
           <dt>Time taken to write last save state to disk</dt>
@@ -63,6 +100,9 @@ class Index {
             <dt>Errored since startup</dt>
             <dd>{$this->fn(count($state['scheduler']['actions']['errored']))}</dd>
         </dl>
+        <hr>
+        <h2>OpCache Status</h2>
+        {$opcache_html}
     </body>
 </html>
 EOT;
@@ -112,5 +152,17 @@ EOT;
         }
         return rtrim($time_str, ',');
     }
+
+    protected function formatMemory($size, $precision = 2): string
+    {
+        if ($size === 0) {
+            return '0B';
+        }
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $base = log($size) / log(1024);
+        return round(pow(1024, $base - floor($base)), $precision) . $units[(int)floor($base)];
+    }
+
+
 
 }
