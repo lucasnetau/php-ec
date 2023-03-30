@@ -55,6 +55,9 @@ new class($filename) {
                 'saveStateSizeBytes' => $saveStateSize,
             ]));
         });
+
+        /** Explicitly start the loop once we have initialised the action */
+        $this->processWrap->run();
     }
 
     public function returnError(JsonRpcRequest $request, $message): void
