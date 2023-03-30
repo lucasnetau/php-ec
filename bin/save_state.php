@@ -4,6 +4,7 @@ use EdgeTelemetrics\EventCorrelation\Library\Actions\ActionHelper;
 use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
 use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use EdgeTelemetrics\JSON_RPC\Error as JsonRpcError;
+use Psr\Log\LogLevel;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 
@@ -16,35 +17,29 @@ if ($filename === false) {
 }
 
 new class($filename) {
-
-    /**
-     * @var ActionHelper
-     */
     protected ActionHelper $processWrap;
 
     protected LoopInterface $loop;
 
-    protected string $directory;
-
     public function __construct(protected string $saveFileName) {
-        $this->directory = dirname($this->saveFileName);
+        $directory = dirname($this->saveFileName);
 
         $this->processWrap = new ActionHelper();
 
         $this->loop = Loop::get();
 
-        $this->processWrap->on(ActionHelper::ACTION_EXECUTE, function(JsonRpcRequest $request) {
+        $this->processWrap->on(ActionHelper::ACTION_EXECUTE, function(JsonRpcRequest $request) use ($directory) {
             $state = $request->getParam('state');
-            $filename = tempnam($this->directory, ".php-ce.state.tmp");
+            $filename = tempnam($directory, ".php-ce.state.tmp"); //Create the temporary file in the same directory as the final destination to ensure rename is on same filesystem
             if (false === $filename) {
-                $this->returnError($request, "Error creating temporary save state file, check filesystem");
+                $this->returnError($request, "Error creating temporary save state file, check filesystem and permissions");
                 return;
             }
             $saveStateSize = strlen($state);
             $saveStateBegin = hrtime(true);
             if (!(@file_put_contents($filename, $state) === $saveStateSize && rename($filename, $this->saveFileName))) {
                 if (file_exists($filename) && !unlink($filename)) {
-                    $this->processWrap->log(\Psr\Log\LogLevel::WARNING, 'Unable to delete temporary save file');
+                    $this->processWrap->log(LogLevel::WARNING, 'Unable to delete temporary save file');
                 }
                 $this->returnError($request, "Save state sync failed." . json_encode(error_get_last()));
                 return;
@@ -64,7 +59,10 @@ new class($filename) {
         $this->processWrap->run();
     }
 
-    public function returnError(JsonRpcRequest $request, $message): void
+    /**
+     * Send a JSON RPC error with message to the calling Scheduler
+     */
+    public function returnError(JsonRpcRequest $request, string $message): void
     {
         $response = JsonRpcResponse::createFromRequest($request);
         $response->setError(new JsonRpcError(JsonRpcError::INTERNAL_ERROR, $message));
