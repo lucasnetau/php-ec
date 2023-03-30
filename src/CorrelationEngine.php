@@ -239,6 +239,7 @@ class CorrelationEngine implements EventEmitterInterface {
         }
 
         /** For any matchers that processed this event fire any actions, then update timeout or destroy if complete **/
+        $stateChanged = (count($handledMatchers) + count($timedOutMatchers)) > 0;
         foreach($handledMatchers as $matcher)
         {
             $matcher->fire();
@@ -252,6 +253,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 unset($matcher);
             }
         }
+
         /**  Fire any action and destroy any timed out matchers **/
         foreach($timedOutMatchers as $matcher)
         {
@@ -263,8 +265,10 @@ class CorrelationEngine implements EventEmitterInterface {
             unset($matcher);
         }
 
-        /** Flag as dirty **/
-        $this->dirty = true;
+        /** Flag as dirty except when we have a control message and state doesn't change **/
+        if ($stateChanged || !in_array($event->event, Scheduler::CONTROL_MESSAGES, true)) {
+            $this->dirty = true;
+        }
 
         /** Increment event per second counters */
         $this->epsCounter->increment();
