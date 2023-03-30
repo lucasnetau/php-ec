@@ -11,8 +11,6 @@ use Psr\Log\LoggerInterface;
 use React\ChildProcess\Process;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
-use React\Filesystem\Filesystem;
-use React\Filesystem\FilesystemInterface;
 use RuntimeException;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
 use function error_get_last;
@@ -34,8 +32,6 @@ use function unlink;
 class FileAdapter implements SaveHandlerInterface {
     use EventEmitterTrait;
 
-    protected FilesystemInterface $filesystem;
-
     /**
      * @var bool Flag to ensure we only have one save going on at a time
      */
@@ -55,7 +51,6 @@ class FileAdapter implements SaveHandlerInterface {
 
     public function __construct( protected string $savePath, protected string $saveFileName, protected LoggerInterface $logger, protected ?LoopInterface $loop ) {
         $this->loop ??= Loop::get();
-        $this->filesystem = Filesystem::create($this->loop);
     }
 
     public function saveStateAsync(array $state)
