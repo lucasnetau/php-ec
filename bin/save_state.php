@@ -56,6 +56,10 @@ new class($filename) {
             ]));
         });
 
+        $this->processWrap->on(ActionHelper::ACTION_SHUTDOWN, function() {
+            $this->processWrap->stop();
+        });
+
         /** Explicitly start the loop once we have initialised the action */
         $this->processWrap->run();
     }
