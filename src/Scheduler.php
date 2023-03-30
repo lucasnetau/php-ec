@@ -186,6 +186,16 @@ class Scheduler implements LoggerAwareInterface {
      */
     const CONTROL_MSG_HEARTBEAT = 'PHP-EC:Engine:Heartbeat';
 
+    /**
+     * Valid list of control messages
+     */
+    const CONTROL_MESSAGES = [
+        self::CONTROL_MSG_NEW_STATE,
+        self::CONTROL_MSG_RESTORED_STATE,
+        self::CONTROL_MSG_STOP,
+        self::CONTROL_MSG_HEARTBEAT,
+    ];
+
     /** @var int Level at which the memory pressure is considered resolved */
     const MEMORY_PRESSURE_LOW_WATERMARK = 35;
 
