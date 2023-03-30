@@ -2,14 +2,19 @@
 
 namespace EdgeTelemetrics\EventCorrelation\SaveHandler;
 
+use EdgeTelemetrics\EventCorrelation\Scheduler;
+use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
+use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
+use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use Evenement\EventEmitterTrait;
-use Exception;
 use Psr\Log\LoggerInterface;
+use React\ChildProcess\Process;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 use React\Filesystem\Filesystem;
 use React\Filesystem\FilesystemInterface;
 use RuntimeException;
+use function EdgeTelemetrics\EventCorrelation\php_cmd;
 use function error_get_last;
 use function file_exists;
 use function file_get_contents;
@@ -17,10 +22,13 @@ use function file_put_contents;
 use function json_decode;
 use function json_encode;
 use function json_last_error_msg;
+use function mt_rand;
+use function realpath;
 use function rename;
 use function round;
 use function strlen;
 use function tempnam;
+use function trim;
 use function unlink;
 
 class FileAdapter implements SaveHandlerInterface {
@@ -41,46 +49,65 @@ class FileAdapter implements SaveHandlerInterface {
     /** @var int Time in millisecond for last save handler to complete */
     protected int $saveStateLastDuration = 0;
 
+    /** @var Process|null Handle to the external process to write out state in an async manner
+     */
+    protected ?Process $process = null;
 
     public function __construct( protected string $savePath, protected string $saveFileName, protected LoggerInterface $logger, protected ?LoopInterface $loop ) {
         $this->loop ??= Loop::get();
         $this->filesystem = Filesystem::create($this->loop);
-
     }
 
     public function saveStateAsync(array $state)
     {
         $this->asyncSaveInProgress = true;
-        $filename = tempnam($this->savePath, ".php-ce.state.tmp");
-        if (false === $filename) {
-            $this->emit('save:failed', ['exception' => new RuntimeException("Error creating temporary save state file, check filesystem")] );
-            return;
-        }
-        $file = $this->filesystem->file($filename);
-        $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
-        if ($state === false) {
-            $this->emit('save:failed', ['exception' => new RuntimeException("Encoding application state failed. " . json_last_error_msg())] );
-            return;
-        }
-        $saveStateSize = strlen($state);
-        $saveStateBegin = hrtime(true);
-        $file->putContents($state)->then(function () use ($file, $saveStateSize, $saveStateBegin) {
-            $file->rename($this->saveFileName)->then(function (\React\Filesystem\Node\FileInterface $newfile) use ($saveStateSize, $saveStateBegin) {
-                //Everything Good
+
+        if ($this->process === null) {
+            $this->process = new Process('exec ' . php_cmd(realpath(__DIR__ . '/../../bin/save_state.php')),
+                dirname($this->saveFileName), ['SAVESTATE_FILENAME' => $this->saveFileName]);
+            $this->process->start($this->loop);
+
+            $this->process->on('exit', function () {
+                if ($this->asyncSaveInProgress) {
+                    $this->logger->critical('Save state process exited during save');
+                }
                 $this->asyncSaveInProgress = false;
-                $this->saveStateSizeBytes = $saveStateSize;
-                $this->saveStateLastDuration = (int)round((hrtime(true) - $saveStateBegin)/1e+6); //Milliseconds
-                if ($this->saveStateLastDuration > 5000) {
-                    $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save state to disk');
+                $this->process = null;
+            });
+
+            /**
+             * Log STDERR messages from save process
+             */
+            $this->process->stderr->on('data', function ($data) {
+                $this->logger->error("save handler message: " . trim($data));
+            });
+
+            $process_decoded_stdout = new JsonRpcDecoder($this->process->stdout);
+
+            $process_decoded_stdout->on('data', function ($rpc) {
+                if ($rpc instanceof JsonRpcResponse) {
+                    $this->asyncSaveInProgress = false;
+                    if ($rpc->isSuccess()) {
+                        $result = $rpc->getResult();
+                        $this->saveStateSizeBytes = $result['saveStateSizeBytes'];
+                        $this->saveStateLastDuration = $result['saveStateLastDuration'];
+                        if ($this->saveStateLastDuration > 5000) {
+                            $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save state to disk');
+                        }
+                    } else {
+                        $error = $rpc->getError();
+                        $this->emit('save:failed',
+                            ['exception' => new RuntimeException($error->getMessage() . " : " . json_encode($error->getData()))]);
+                    }
                 }
             });
-        }, function (Exception $ex) use($filename) {
-            $this->emit('save:failed', ['exception' => $ex] ); /** We didn't save state correctly, so we mark the scheduler as dirty to ensure it is attempted again */
-            $this->asyncSaveInProgress = false;
-            if (file_exists($filename) && !unlink($filename)) {
-                $this->logger->warning('Unable to delete temporary save file');
-            }
-        });
+
+            $this->logger->debug('Initialised save handler process');
+        }
+        $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+
+        $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state], mt_rand());
+        $this->process->stdin->write(json_encode($rpc_request) . "\n");
     }
 
     public function saveStateSync(array $state)
