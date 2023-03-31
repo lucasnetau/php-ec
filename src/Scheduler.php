@@ -38,6 +38,7 @@ use function array_keys;
 use function array_map;
 use function array_pop;
 use function array_shift;
+use function bin2hex;
 use function function_exists;
 use function gc_enable;
 use function gc_enabled;
@@ -56,7 +57,7 @@ use function get_class;
 use function gc_collect_cycles;
 use function gc_mem_caches;
 use function array_merge;
-use function mt_rand;
+use function random_bytes;
 use function round;
 use function trim;
 
@@ -809,10 +810,14 @@ class Scheduler implements LoggerAwareInterface {
             {
                 $process = $this->start_action($actionName);
                 /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
-                /** @TODO id should be a sequential number and not generated from mt_rand() */
-                $rpc_request = new JsonRpcRequest(self::ACTION_RUN_METHOD, $action->getVars(), mt_rand());
-                $this->inflightActionCommands[$rpc_request->getId()]['action'] = $action;
-                $this->inflightActionCommands[$rpc_request->getId()]['pid'] = $process->getPid();
+                do {
+                    $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
+                } while (array_key_exists($uniqid, $this->inflightActionCommands));
+                $rpc_request = new JsonRpcRequest(self::ACTION_RUN_METHOD, $action->getVars(), $uniqid);
+                $this->inflightActionCommands[$uniqid] = [
+                    'action' => $action,
+                    'pid' => $process->getPid(),
+                ];
                 $this->dirty = true;
                 $process->stdin->write(json_encode($rpc_request) . "\n");
             }

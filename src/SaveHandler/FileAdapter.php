@@ -12,15 +12,17 @@ use React\ChildProcess\Process;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 use RuntimeException;
+use function bin2hex;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
 use function error_get_last;
 use function file_exists;
 use function file_get_contents;
 use function file_put_contents;
+use function hrtime;
 use function json_decode;
 use function json_encode;
 use function json_last_error_msg;
-use function mt_rand;
+use function random_bytes;
 use function realpath;
 use function rename;
 use function round;
@@ -101,7 +103,8 @@ class FileAdapter implements SaveHandlerInterface {
         }
         $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
 
-        $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state], mt_rand());
+        $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
+        $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state], $uniqid);
         $this->process->stdin->write(json_encode($rpc_request) . "\n");
     }
 
