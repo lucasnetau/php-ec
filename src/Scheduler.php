@@ -672,7 +672,7 @@ class Scheduler implements LoggerAwareInterface {
      * Scheduling timeouts is only supported when the engine is running in live mode. The Correlation engine will check timeouts for batch mode within the handle() function
      * @throws Exception
      */
-    function scheduleNextTimeout() : void
+    protected function scheduleNextTimeout() : void
     {
         /**
          * Cancel current timeout and set up the next one
