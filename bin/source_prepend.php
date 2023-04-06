@@ -2,6 +2,6 @@
 
 use function EdgeTelemetrics\EventCorrelation\initialiseSourceProcess;
 
-require __DIR__ . '/composer.php';
+require_once  __DIR__ . '/composer.php';
 
 initialiseSourceProcess(true);

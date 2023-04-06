@@ -8,7 +8,7 @@ use Psr\Log\LogLevel;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 
-require __DIR__ . '/composer.php';
+require_once __DIR__ . '/composer.php';
 
 $filename = getenv('SAVESTATE_FILENAME');
 if ($filename === false) {

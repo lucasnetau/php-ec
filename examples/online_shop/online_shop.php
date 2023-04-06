@@ -16,13 +16,13 @@ use Psr\Log\LogLevel;
 
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
 
-include __DIR__ . "/../../vendor/autoload.php";
+require __DIR__ . "/../../vendor/autoload.php";
 
-include __DIR__ . "/rules/CheckOrderPayment.php";
-include __DIR__ . "/rules/OrderPaidSendCustomerReceipt.php";
-include __DIR__ . "/rules/OrderPaymentReminder.php";
-include __DIR__ . "/rules/OrderReceivedSendCustomerEmail.php";
-include __DIR__ . "/rules/OrderReceivedSendShopEmail.php";
+require __DIR__ . "/rules/CheckOrderPayment.php";
+require __DIR__ . "/rules/OrderPaidSendCustomerReceipt.php";
+require __DIR__ . "/rules/OrderPaymentReminder.php";
+require __DIR__ . "/rules/OrderReceivedSendCustomerEmail.php";
+require __DIR__ . "/rules/OrderReceivedSendShopEmail.php";
 
 $rules = [
     CheckOrderPayment::class,

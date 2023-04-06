@@ -15,4 +15,4 @@ if (!file_exists($dir.'/autoload.php')) {
     exit(1);
 }
 
-require $dir.'/autoload.php';
+require_once $dir.'/autoload.php';
