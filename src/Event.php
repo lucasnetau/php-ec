@@ -29,6 +29,7 @@ use function json_decode;
  * @property ?DateTimeImmutable $datetime
  * @property ?DateTimeImmutable $receivedTime
  */
+#[\AllowDynamicProperties]
 class Event implements IEvent {
     /**
      * @var mixed
