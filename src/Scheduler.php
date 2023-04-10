@@ -155,7 +155,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * @var bool Flag if the scheduler has information that needs to be flushed to the save file.
      */
-    protected bool $dirty;
+    protected bool $dirty = false;
 
     /**
      * @var float How ofter to save state
