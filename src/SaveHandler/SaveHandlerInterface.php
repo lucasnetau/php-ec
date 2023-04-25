@@ -5,8 +5,8 @@ use Evenement\EventEmitterInterface;
 
 interface SaveHandlerInterface extends EventEmitterInterface {
 
-    public function saveStateAsync(array $state);
-    public function saveStateSync(array $state);
+    public function saveStateAsync(array $state) : void;
+    public function saveStateSync(array $state) : void;
 
     public function asyncSaveInProgress() : bool;
 

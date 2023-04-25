@@ -36,7 +36,6 @@ new class($filename) {
                 return;
             }
             $saveStateSize = strlen($state);
-            $saveStateBegin = hrtime(true);
             if (!(@file_put_contents($filename, $state) === $saveStateSize && rename($filename, $this->saveFileName))) {
                 if (file_exists($filename) && !unlink($filename)) {
                     $this->processWrap->log(LogLevel::WARNING, 'Unable to delete temporary save file');
@@ -46,7 +45,7 @@ new class($filename) {
             }
 
             $this->processWrap->write(new JsonRpcResponse($request->getId(), [
-                'saveStateLastDuration' => (int)round((hrtime(true) - $saveStateBegin)/1e+6), //Milliseconds
+                'saveStateBeginTime' => $request->getParam('time'),
                 'saveStateSizeBytes' => $saveStateSize,
             ]));
         });

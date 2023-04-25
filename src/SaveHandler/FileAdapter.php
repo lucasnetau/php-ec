@@ -55,7 +55,7 @@ class FileAdapter implements SaveHandlerInterface {
         $this->loop ??= Loop::get();
     }
 
-    public function saveStateAsync(array $state)
+    public function saveStateAsync(array $state): void
     {
         $this->asyncSaveInProgress = true;
 
@@ -87,7 +87,7 @@ class FileAdapter implements SaveHandlerInterface {
                     if ($rpc->isSuccess()) {
                         $result = $rpc->getResult();
                         $this->saveStateSizeBytes = $result['saveStateSizeBytes'];
-                        $this->saveStateLastDuration = $result['saveStateLastDuration'];
+                        $this->saveStateLastDuration = (int)round((hrtime(true) - $result['saveStateBeginTime'])/1e+6); //Milliseconds
                         if ($this->saveStateLastDuration > 5000) {
                             $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save state to disk');
                         }
@@ -104,11 +104,11 @@ class FileAdapter implements SaveHandlerInterface {
         $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
 
         $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
-        $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state], $uniqid);
+        $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state, 'time' => hrtime(true)], $uniqid);
         $this->process->stdin->write(json_encode($rpc_request) . "\n");
     }
 
-    public function saveStateSync(array $state)
+    public function saveStateSync(array $state): void
     {
         $filename = tempnam("/tmp", ".php-ce.state.tmp");
         if (false === $filename) {
