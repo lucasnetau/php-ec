@@ -8,6 +8,7 @@ use EdgeTelemetrics\JSON_RPC\Error as JsonRpcError;
 use Psr\Log\LogLevel;
 use React\EventLoop\Loop;
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
+use function EdgeTelemetrics\EventCorrelation\env;
 
 require __DIR__ . '/../../vendor/autoload.php';
 
