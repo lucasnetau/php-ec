@@ -74,11 +74,13 @@ class FileAdapter implements SaveHandlerInterface {
 
             /**
              * Log STDERR messages from save process
+             * @psalm-suppress PossiblyNullReference
              */
             $this->process->stderr->on('data', function ($data) {
                 $this->logger->error("save handler message: " . trim($data));
             });
 
+            /** @psalm-suppress PossiblyInvalidArgument */
             $process_decoded_stdout = new JsonRpcDecoder($this->process->stdout);
 
             $process_decoded_stdout->on('data', function ($rpc) {
@@ -89,10 +91,13 @@ class FileAdapter implements SaveHandlerInterface {
                         $this->saveStateSizeBytes = $result['saveStateSizeBytes'];
                         $this->saveStateLastDuration = (int)round((hrtime(true) - $result['saveStateBeginTime'])/1e+6); //Milliseconds
                         if ($this->saveStateLastDuration > 5000) {
-                            $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save state to disk');
+                            $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save ' . round($this->saveStateSizeBytes/1048576, 2) . 'MB state to disk');
                         }
                     } else {
                         $error = $rpc->getError();
+                        /**
+                         * @psalm-suppress PossiblyNullReference
+                         */
                         $this->emit('save:failed',
                             ['exception' => new RuntimeException($error->getMessage() . " : " . json_encode($error->getData()))]);
                     }
@@ -105,12 +110,18 @@ class FileAdapter implements SaveHandlerInterface {
 
         $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
         $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state, 'time' => hrtime(true)], $uniqid);
+        /**
+         * ReactPHP Process typehints aren't helpful here. stdin will be defined and be of type WritableStreamInterface
+         * @psalm-suppress PossiblyUndefinedMethod
+         * @psalm-suppress PossiblyNullReference
+         */
         $this->process->stdin->write(json_encode($rpc_request) . "\n");
     }
 
     public function saveStateSync(array $state): void
     {
-        $filename = tempnam("/tmp", ".php-ce.state.tmp");
+        $directory = dirname($this->saveFileName);
+        $filename = tempnam($directory, ".php-ce.state.tmp");
         if (false === $filename) {
             $this->emit('save:failed', ['exception' => new RuntimeException("Error creating temporary save state file, check filesystem")] );
             return;
