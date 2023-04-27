@@ -610,10 +610,10 @@ class Scheduler implements LoggerAwareInterface {
         /**
          * Set up a time to save the state of the correlation engine every saveStateSeconds
          */
-        $this->saveStateHandler->on('save:failed', function($arguments) {
+        $this->saveStateHandler->on('save:failed', function($exception) {
             $this->dirty = true;
             if ($this->shuttingDown === false) { //Failure is expected if the save handler is running when the scheduler starts shutting down. A sync save state will be run at end of shutdown
-                $this->logger->critical("Save state async failed.", ['exception' => $arguments['exception']]);
+                $this->logger->critical("Save state async failed.", ['exception' => $exception]);
             }
         });
 
