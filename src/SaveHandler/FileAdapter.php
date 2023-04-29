@@ -67,6 +67,7 @@ class FileAdapter implements SaveHandlerInterface {
             $this->process->on('exit', function () {
                 if ($this->asyncSaveInProgress) {
                     $this->logger->critical('Save state process exited during save');
+                    $this->emit('save:failed', ['exception' => new RuntimeException('Save state process exited during save')]);
                 }
                 $this->asyncSaveInProgress = false;
                 $this->process = null;
@@ -98,8 +99,7 @@ class FileAdapter implements SaveHandlerInterface {
                         /**
                          * @psalm-suppress PossiblyNullReference
                          */
-                        $this->emit('save:failed',
-                            ['exception' => new RuntimeException($error->getMessage() . " : " . json_encode($error->getData()))]);
+                        $this->emit('save:failed', ['exception' => new RuntimeException($error->getMessage() . " : " . json_encode($error->getData()))]);
                     }
                 }
             });
