@@ -50,15 +50,24 @@ class ActionHelper extends EventEmitter {
 
     protected LoggerInterface $logger;
 
-    public function __construct() {
+    const INPUT_BUFFER_SIZE = 65536;
+
+    public function __construct(array $options = []) {
         setupErrorHandling(true);
         disableOutputBuffering();
         $this->loop = Loop::get();
 
-        $this->input = new Decoder(new ReadableResourceStream(STDIN));
+        $buffer_size = $options['json_buffer_size'] ?? self::INPUT_BUFFER_SIZE;
+
+        $this->input = new Decoder(new ReadableResourceStream(STDIN), $buffer_size);
         $this->output = new Encoder(new WritableResourceStream(STDOUT));
 
         $this->logger = new JsonRpcLogger(LogLevel::DEBUG, STDOUT);
+
+        $this->input->on('error', function($exception) {
+            $this->logger->critical('Error on STDIN', ['exception' => $exception]);
+            $this->stop();
+        });
 
         $this->input->on('data', function(JsonRpcNotification $rpc) {
             if (Scheduler::ACTION_RUN_METHOD === $rpc->getMethod()) {
