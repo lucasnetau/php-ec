@@ -55,6 +55,8 @@ class Index {
                     <dd>{$this->fn(implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['interned_strings_usage']), array_values($opcache_status['interned_strings_usage']))))}</dd>
                     <dt>Opcache Statistics</dt>
                     <dd>{$this->fn(implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['opcache_statistics']), array_values($opcache_status['opcache_statistics']))))}</dd>
+                    <dt>JIT Statistics</dt>
+                    <dd>{$this->fn(implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['jit']), array_values($opcache_status['jit']))))}</dd>
                 </dl>
 EOH;
 
@@ -132,25 +134,16 @@ EOT;
         $calc['days']  = $num;
 
         $calc = array_filter($calc, function($val) { return ($val !== 0); });
-        $time_str = '';
+        $time_strings = [];
         foreach(array_reverse($calc) as $segment => $value) {
-            switch($segment) {
-                case 'secs':
-                    $time_str .= $value . ' seconds';
-                    break;
-                case 'mins':
-                    $time_str .= $value . ' minutes';
-                    break;
-                case 'hours':
-                    $time_str .= $value . ' hours';
-                    break;
-                case 'days':
-                    $time_str .= $value . ' days';
-                    break;
-            }
-            $time_str .= ',';
+            $time_strings[] = match($segment) {
+                'secs' => $value . ' seconds',
+                'mins' => $value . ' minutes',
+                'hours' => $value . ' hours',
+                'days' => $value . ' days',
+            };
         }
-        return rtrim($time_str, ',');
+        return implode(", ", $time_strings);
     }
 
     protected function formatMemory($size, $precision = 2): string
