@@ -618,7 +618,8 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         $this->scheduledTasks['scheduledSaveState'] = $this->loop->addPeriodicTimer($this->saveStateSeconds, function() {
-            if (($this->engine->isDirty() || $this->dirty) && false === $this->saveStateHandler->asyncSaveInProgress())
+            static $skipCount = 0;
+            if (($this->dirty || $this->engine->isDirty()) && false === $this->saveStateHandler->asyncSaveInProgress())
             {
                 /** Clear the dirty flags before calling the async save process.
                  * This ensures that changes that occur between now and the save file
@@ -626,9 +627,15 @@ class Scheduler implements LoggerAwareInterface {
                  */
                 $this->engine->clearDirtyFlag();
                 $this->dirty = false;
+                $skipCount = 0;
                 $this->saveStateHandler->saveStateAsync($this->buildState());
+            } else if ($this->saveStateHandler->asyncSaveInProgress()) {
+                if ((++$skipCount % 5) === 0) {
+                    $this->logger->warning("skipping save, another save is still in process (attempt: $skipCount)");
+                }
             }
         });
+        $this->logger->debug("Save handler configured for " . $this->saveStateSeconds . ' seconds');
 
         /** Set up an hourly time to save state (or skip if we are already saving state when this timer fires) */
         $this->scheduledTasks['hourlySaveState'] = $this->loop->addPeriodicTimer(3600, function() {
