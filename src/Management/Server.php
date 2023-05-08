@@ -48,8 +48,9 @@ final class Server {
         );
 
         $port = (int)env("PORT", "3000");
+        $host = env('HOST', "127.0.0.1");
 
-        $this->socketServer = new SocketServer("127.0.0.1:$port");
+        $this->socketServer = new SocketServer("$host:$port");
         $this->httpServer->listen($this->socketServer);
     }
 
