@@ -10,6 +10,7 @@ use FastRoute\RouteParser\Std;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\HttpServer;
 use React\Socket\SocketServer;
+use function EdgeTelemetrics\EventCorrelation\env;
 use function str_replace;
 
 final class Server {
@@ -46,7 +47,9 @@ final class Server {
             new Router($routes)
         );
 
-        $this->socketServer = new SocketServer('127.0.0.1:0');
+        $port = (int)env("PORT", "3000");
+
+        $this->socketServer = new SocketServer("127.0.0.1:$port");
         $this->httpServer->listen($this->socketServer);
     }
 
