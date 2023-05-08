@@ -13,6 +13,8 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use DateInterval;
 use DateTimeImmutable;
+use function microtime;
+use function round;
 
 class Counter {
 
@@ -56,7 +58,7 @@ class Counter {
     /**
      * Increment the counter for the current time
      */
-    public function increment()
+    public function increment(): void
     {
         $time = $this->getTime();
 
@@ -84,13 +86,15 @@ class Counter {
      * @return int
      */
     public function getLastEventTime() : int {
-        return $this->lastEventTime;
+        $timeSinceLastEvent = $this->getTime()-$this->lastEventTime;
+        return (self::RESOLUTION_MILLISECONDS === $this->resolution)? (int)round(microtime(true)-$timeSinceLastEvent) : time()-$timeSinceLastEvent;
     }
 
     /**
      * Initialise the counter data structure
      */
-    protected function initCounter() {
+    protected function initCounter(): void
+    {
         $this->counter = array_fill(0,$this->counter_length, 0);
     }
 
@@ -100,11 +104,7 @@ class Counter {
      */
     protected function getTime() : int
     {
-        if (self::RESOLUTION_MILLISECONDS === $this->resolution) {
-            return (int)round(microtime(true) * 1000);
-        } else {
-            return time();
-        }
+        return (self::RESOLUTION_MILLISECONDS === $this->resolution)? (int)round(hrtime(true)/1e+6) : (int)round(hrtime(true)/1e+9);
     }
 
     /**
@@ -119,7 +119,8 @@ class Counter {
      * Set any slots between the last event time and current time to 0
      * @param int $time
      */
-    protected function flushOldSlots(int $time) {
+    protected function flushOldSlots(int $time): void
+    {
         /** Don't flush if we are tracking the current time */
         if ($time === $this->lastEventTime)
         {
