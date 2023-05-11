@@ -24,7 +24,7 @@ new class($filename) {
     public function __construct(protected string $saveFileName) {
         $directory = dirname($this->saveFileName);
 
-        $this->processWrap = new ActionHelper(['json_buffer_size' => 10485760]);
+        $this->processWrap = new ActionHelper(['json_buffer_size' => 10485760*2]);
 
         $this->loop = Loop::get();
 
