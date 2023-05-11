@@ -3,6 +3,7 @@
 namespace EdgeTelemetrics\EventCorrelation\SaveHandler;
 
 use EdgeTelemetrics\EventCorrelation\Scheduler;
+use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
 use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
@@ -14,6 +15,7 @@ use React\EventLoop\LoopInterface;
 use RuntimeException;
 use function bin2hex;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
+use function dirname;
 use function error_get_last;
 use function file_exists;
 use function file_get_contents;
@@ -51,12 +53,28 @@ class FileAdapter implements SaveHandlerInterface {
      */
     protected ?Process $process = null;
 
+    protected int $asyncFailureCount = 0;
+
+    protected bool $asyncFaulty = false;
+
     public function __construct( protected string $savePath, protected string $saveFileName, protected LoggerInterface $logger, protected ?LoopInterface $loop ) {
         $this->loop ??= Loop::get();
     }
 
     public function saveStateAsync(array $state): void
     {
+        if ($this->asyncFaulty) {
+            $this->saveStateSync($state);
+            return;
+        }
+
+        if ($this->asyncFailureCount === 10) {
+            $this->logger->emergency('Async save handler exiting to often, moving to sync save');
+            $this->asyncFaulty = true;
+            $this->saveStateSync($state);
+            return;
+        }
+
         $this->asyncSaveInProgress = true;
 
         if ($this->process === null) {
@@ -66,6 +84,7 @@ class FileAdapter implements SaveHandlerInterface {
 
             $this->process->on('exit', function () {
                 if ($this->asyncSaveInProgress) {
+                    $this->asyncFailureCount++;
                     $this->logger->critical('Save state process exited during save');
                     $this->emit('save:failed', ['exception' => new RuntimeException('Save state process exited during save')]);
                 }
@@ -88,6 +107,7 @@ class FileAdapter implements SaveHandlerInterface {
                 if ($rpc instanceof JsonRpcResponse) {
                     $this->asyncSaveInProgress = false;
                     if ($rpc->isSuccess()) {
+                        $this->asyncFailureCount = 0;
                         $result = $rpc->getResult();
                         $this->saveStateSizeBytes = $result['saveStateSizeBytes'];
                         $this->saveStateLastDuration = (int)round((hrtime(true) - $result['saveStateBeginTime'])/1e+6); //Milliseconds
@@ -100,6 +120,11 @@ class FileAdapter implements SaveHandlerInterface {
                          * @psalm-suppress PossiblyNullReference
                          */
                         $this->emit('save:failed', ['exception' => new RuntimeException($error->getMessage() . " : " . json_encode($error->getData()))]);
+                    }
+                } elseif ($rpc instanceof JsonRpcNotification) {
+                    if ($rpc->getMethod() === Scheduler::RPC_PROCESS_LOG) {
+                        //Log action expects logLevel to match \Psr\Log\LogLevel
+                        $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'));
                     }
                 }
             });
@@ -177,5 +202,10 @@ class FileAdapter implements SaveHandlerInterface {
         }
         return false;
 
+    }
+
+    public function __destruct()
+    {
+        $this->process?->terminate(SIGTERM);
     }
 }
