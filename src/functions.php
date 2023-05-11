@@ -24,6 +24,7 @@ use function file_exists;
 use function function_exists;
 use function fwrite;
 use function json_encode;
+use function posix_setpgid;
 use function realpath;
 use function register_shutdown_function;
 use function set_exception_handler;
@@ -175,5 +176,9 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\initialiseSourceProcess'
     {
         disableOutputBuffering();
         setupErrorHandling($usingEventLoop);
+        //Detach from the schedulers process group to ensure CTRL-C from shell isn't propagated
+        if (function_exists('\posix_setpgid')) {
+            posix_setpgid(0, 0);
+        }
     }
 }
