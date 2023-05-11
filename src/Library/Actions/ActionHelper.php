@@ -25,6 +25,7 @@ use React\Stream\WritableResourceStream;
 
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
 use function EdgeTelemetrics\EventCorrelation\setupErrorHandling;
+use function function_exists;
 
 /**
  * Class Action Helper
@@ -57,6 +58,11 @@ class ActionHelper extends EventEmitter {
         disableOutputBuffering();
         $this->loop = Loop::get();
 
+        //Drop the process into its own process group so that SIGINT isn't propagated when running under a shell
+        if (function_exists('\posix_setpgid')) {
+            \posix_setpgid(0,0);
+        }
+
         $buffer_size = $options['json_buffer_size'] ?? self::INPUT_BUFFER_SIZE;
 
         $this->input = new Decoder(new ReadableResourceStream(STDIN), $buffer_size);
@@ -64,8 +70,12 @@ class ActionHelper extends EventEmitter {
 
         $this->logger = new JsonRpcLogger(LogLevel::DEBUG, STDOUT);
 
-        $this->input->on('error', function($exception) {
-            $this->logger->critical('Error on STDIN', ['exception' => $exception]);
+        $this->input->on('error', function($exception) use ($buffer_size) {
+            if ($exception instanceof \OverflowException) {
+                $this->logger->critical("RPC Request was greater than configured buffer size $buffer_size");
+            } else {
+                $this->logger->critical('Unexpected exception on STDIN', ['exception' => $exception]);
+            }
             $this->stop();
         });
 
@@ -87,8 +97,25 @@ class ActionHelper extends EventEmitter {
             }
         });
 
+        //When STDIN closes we can't receive any more data so let's signal to the app to flush and close
+        $this->input->on('close', function() {
+            $this->emit(self::ACTION_SHUTDOWN);
+        });
+
+        $this->output->on('close', function() {
+            //Don't try to do anything else, our output has closed, we are either shutting down or we cannot communicate with scheduler
+            $this->loop->removeSignal(SIGINT, $this->signalHandler);
+            $this->loop->removeSignal(SIGTERM, $this->signalHandler);
+            $this->loop->stop();
+        });
+
         $this->signalHandler = function(int $signal) {
-            $this->logger->log(LogLevel::DEBUG, "received signal $signal, finishing up action...");
+            $lookup = [
+                SIGINT => 'SIGINT',
+                SIGTERM => 'SIGTERM',
+                SIGKILL => 'SIGKILL',
+            ];
+            $this->logger->log(LogLevel::DEBUG, "ActionHelper received signal " . $lookup[$signal] ?? $signal . "finishing up action...");
             $this->loop->futureTick(function () {
                 $this->emit(self::ACTION_SHUTDOWN);
             });
@@ -128,12 +155,16 @@ class ActionHelper extends EventEmitter {
 
     /**
      * Actions should signal they have flushed any buffers and are ready for us to stop by calling this method
+     * We shut down by giving input time to deliver all final data and then close input
      */
     public function stop() : void {
-        $this->loop->removeSignal(SIGINT, $this->signalHandler);
-        $this->loop->removeSignal(SIGTERM, $this->signalHandler);
-        $this->loop->futureTick(function() {
-            $this->loop->stop();
-        });
+        if ($this->input->isReadable()) {
+            $this->loop->addTimer(1.0, function () {
+                unset($this->logger);
+                $this->input->close();
+            });
+        } else if ($this->output->isWritable()) {
+            $this->output->end();
+        }
     }
 }
