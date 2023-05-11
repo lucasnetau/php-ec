@@ -33,6 +33,7 @@ use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 use RuntimeException;
 
 use function array_filter;
+use function array_key_exists;
 use function array_key_first;
 use function array_keys;
 use function array_map;
@@ -325,6 +326,9 @@ class Scheduler implements LoggerAwareInterface {
         if ($process->isRunning()) {
             $this->logger->info("Started input process $id");
             $this->input_processes[$id] = $process;
+            if (function_exists('\posix_setpgid')) {
+                \posix_setpgid($process->getPid(), 0);
+            }
             return $process;
         }
         throw new RuntimeException('Input process ' . $id . ' failed to start');
@@ -912,11 +916,13 @@ class Scheduler implements LoggerAwareInterface {
 
         while ($task = array_pop($this->scheduledTasks)) {
             $this->loop->cancelTimer($task);
+            $task = null;
         }
 
         if (count($this->input_processes) > 0) {
             $this->logger->debug( "Shutting down running input processes");
             foreach ($this->input_processes as $processKey => $process) {
+                $this->logger->debug( "Sending SIGTERM to input process $processKey");
                 if (false === $process->terminate(SIGTERM)) {
                     $this->logger->error( "Unable to send SIGTERM to input process $processKey");
                 }
@@ -933,7 +939,6 @@ class Scheduler implements LoggerAwareInterface {
         } else {
             $this->stop();
         }
-
     }
 
     /**
@@ -948,13 +953,20 @@ class Scheduler implements LoggerAwareInterface {
         /**
          * Notify any rules listening for a Stop event that we are stopping
          */
+        $this->logger->debug( "Notify CorrelationEngine that we are stopping");
         $this->engine->handle(new Event(['event' => static::CONTROL_MSG_STOP]));
 
         /** Check if we have any running action commands, if we do then some actions may not have completed and/or need to flush+complete tasks. Send them a SIGTERM to complete their shutdown */
         if (count($this->runningActions) > 0) {
+            foreach ($this->runningActions as $processKey => $process) {
+                /** End the stdin for the process to ensure we flush any pending actions */
+                $process->stdin->end();
+            }
+
             $this->loop->futureTick(function() {
                 $this->logger->debug("Shutting down running action processes");
                 foreach ($this->runningActions as $processKey => $process) {
+                    $this->logger->debug( "Sending SIGTERM to action process $processKey");
                     if (false === $process->terminate(SIGTERM)) {
                         $this->logger->error("Unable to send SIGTERM to action process $processKey");
                     }
@@ -986,6 +998,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->loop->stop();
             $this->logger->debug("Event Loop stopped");
             $this->saveStateHandler->saveStateSync($this->buildState()); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
+            unset($this->saveStateHandler);
         });
     }
 
@@ -1120,7 +1133,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * Run memory reclaim
      */
-    protected function memoryReclaim() {
+    protected function memoryReclaim() : void {
         $mark = hrtime(true);
         $memCurr = memory_get_usage();
         $cycles = gc_collect_cycles();
