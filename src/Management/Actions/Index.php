@@ -18,6 +18,7 @@ class Index {
 
     public function __invoke(ServerRequestInterface $request): Response
     {
+        global $argv;
         /** @var Scheduler $scheduler */
         $scheduler = $request->getAttribute('scheduler');
 
@@ -71,6 +72,8 @@ EOH;
     <body>
         <h1>PHP Event Engine</h1>
         <dl>
+          <dt>Command</dt>
+          <dd>{$this->fn(\cli_get_process_title() ?: implode(" ", $argv))}</dd>
           <dt>Running Mode</dt>
           <dd>$running_mode</dd>
           <dt>Start Time</dt>
