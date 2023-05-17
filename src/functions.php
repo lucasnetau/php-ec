@@ -167,6 +167,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
             if ($usingEventLoop) {
                 Loop::stop();
             }
+            exit(1);
         });
     }
 }
