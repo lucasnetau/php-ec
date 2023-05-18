@@ -11,7 +11,9 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use DateTime;
 use DateTimeImmutable;
+use DateTimeInterface;
 use DateTimeZone;
 use Exception;
 use function ucfirst;
@@ -58,19 +60,26 @@ class Event implements IEvent {
      */
     public function __construct(array $kvp)
     {
-        //$this->datetime = DateTime::createFromFormat('U', $kvp['datetime'], new DateTimeZone('UTC'));
-        if (isset($kvp['datetime']))
-        {
-            //Parse the date string into a DateTimeImmutable (supports timezone encoded in string), then normalise the datetime to UTC timezone
-            $timezone = new DateTimeZone('UTC');
-            $this->datetime = (new DateTimeImmutable($kvp['datetime'], $timezone))->setTimezone($timezone);
-            unset($kvp['datetime']);
-        }
-        else
-        {
+        //Parse the date string into a DateTimeImmutable (supports timezone encoded in string), then normalise the datetime to UTC timezone
+        $timezone = new DateTimeZone('UTC');
+
+        $datetime_value = $kvp['datetime'] ?? null;
+        if (is_int($datetime_value)) {
+            /** Integer is processed as a UNIX timestamp */
+            $time = DateTimeImmutable::createFromFormat('U', (string)$datetime_value);
+        } elseif($datetime_value instanceof DateTimeInterface) {
+            $time = ($datetime_value instanceof DateTime) ? DateTimeImmutable::createFromMutable($datetime_value) : $datetime_value;
+        } elseif(is_string($datetime_value)) {
+            $time = new DateTimeImmutable($datetime_value);
+        } else {
             /** If the event data doesn't have a datetime then set it to the server time when received **/
-            $this->datetime = new DateTimeImmutable();
+            $time = new DateTimeImmutable();
         }
+
+        //Normalise to UTC
+        $this->datetime = $time->setTimezone($timezone);
+        unset($kvp['datetime']);
+
         foreach ($kvp as $key => $value) {
             $this->$key = $value;
         }
