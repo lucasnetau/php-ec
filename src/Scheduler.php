@@ -522,7 +522,7 @@ class Scheduler implements LoggerAwareInterface {
                     if (count($this->inflightActionCommands) === 0) {
                         $this->inflightActionCommands = [];
 
-                        if ($this->errorRecovery === true) {
+                        if ($this->errorRecovery === true && count($this->erroredActionCommands) === 0) {
                             $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
                             $this->errorRecovery = false;
                             $this->initialise_input_processes();
