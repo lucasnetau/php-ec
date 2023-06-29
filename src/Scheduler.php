@@ -835,8 +835,8 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function run() : void
     {
-        if (!$this->isOpcacheEnabled())
-        {
+        /** Opcache is disabled if either the extension isn't loaded or opcache_get_status returns false */
+        if (!(function_exists('opcache_get_status') && opcache_get_status(false) !== false)) {
             $this->logger->warning("*** Opcache is not enabled. This will reduce performance and increase memory usage ***");
         }
 
@@ -1218,20 +1218,6 @@ class Scheduler implements LoggerAwareInterface {
         if (function_exists('memory_reset_peak_usage')) {
             \memory_reset_peak_usage();
         }
-    }
-
-    /**
-     * @return bool
-     */
-    protected function isOpcacheEnabled() : bool
-    {
-        if (function_exists('opcache_get_status'))
-        {
-            $status = opcache_get_status(false);
-
-            return (false !== $status);
-        }
-        return false;
     }
 
     /**
