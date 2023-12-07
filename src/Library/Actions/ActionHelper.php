@@ -58,6 +58,11 @@ class ActionHelper extends EventEmitter {
         disableOutputBuffering();
         $this->loop = Loop::get();
 
+        if (function_exists('\cli_set_process_title')){
+            $myName = $options['action_name'] ?? 'action process';
+            @\cli_set_process_title($myName); //Silence it as macOS prior to certain PHP versions it does not work
+        }
+
         //Drop the process into its own process group so that SIGINT isn't propagated when running under a shell
         if (function_exists('\posix_setpgid')) {
             \posix_setpgid(0,0);

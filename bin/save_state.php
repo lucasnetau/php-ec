@@ -8,7 +8,11 @@ use Psr\Log\LogLevel;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 
+use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
+
 require_once __DIR__ . '/composer.php';
+
+disableOutputBuffering();
 
 $filename = getenv('SAVESTATE_FILENAME');
 if ($filename === false) {
@@ -24,7 +28,7 @@ new class($filename) {
     public function __construct(protected string $saveFileName) {
         $directory = dirname($this->saveFileName);
 
-        $this->processWrap = new ActionHelper(['json_buffer_size' => 10485760*2]);
+        $this->processWrap = new ActionHelper(['action_name' => 'checkpointer', 'json_buffer_size' => 10485760*2]);
 
         $this->loop = Loop::get();
 
@@ -43,7 +47,6 @@ new class($filename) {
                 $this->returnError($request, "Save state sync failed." . json_encode(error_get_last()));
                 return;
             }
-
             $this->processWrap->write(new JsonRpcResponse($request->getId(), [
                 'saveStateBeginTime' => $request->getParam('time'),
                 'saveStateSizeBytes' => $saveStateSize,
