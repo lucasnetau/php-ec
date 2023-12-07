@@ -849,7 +849,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->initialiseManagementServer();
 
         /** Restore the state of the scheduler and engine */
-        $this->saveStateHandler = new FileAdapter('/tmp', $this->saveFileName, $this->logger, $this->loop);
+        $this->saveStateHandler = new FileAdapter(sys_get_temp_dir(), $this->saveFileName, $this->logger, $this->loop);
         $this->restoreState();
 
         /**
