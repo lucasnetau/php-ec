@@ -140,14 +140,13 @@ class CorrelationEngine implements EventEmitterInterface {
         /** Record that we have seen an event of this type */
         $this->incrStat('seen', (string)$event->event);
 
-        /** If the event stream is live we want to make sure the event timestamp is within
-         *  10 minutes of the current time, otherwise we will set it to the server time.
+        /**
+         * If the event stream is live we want to make sure the event timestamp is within
+         *  MAX_TIME_VARIANCE seconds of the current time, otherwise we will set it to the server time.
          */
-        if (true === $this->eventstream_live)
-        {
+        if (true === $this->eventstream_live) {
             $now = new DateTimeImmutable();
-            if (abs($now->getTimestamp() - $event->datetime->getTimestamp()) > (self::MAX_TIME_VARIANCE))
-            {
+            if (abs($now->getTimestamp() - $event->datetime->getTimestamp()) > (self::MAX_TIME_VARIANCE)) {
                 echo "Correcting received time to {$now->format('c')}\n";
                 $event->setReceivedTime($now);
             }
@@ -158,15 +157,15 @@ class CorrelationEngine implements EventEmitterInterface {
          * @TODO This might not be the best place to call this where multiple stream interlace with different timestamps.
          * @TODO This should be moved to checking if a matcher would handle the event then to call it's timeout check first and other items.
          */
-        if (false === $this->eventstream_live)
-        {
+        if (false === $this->eventstream_live) {
             $this->checkTimeouts($event->datetime->modify('-1 second'));
         }
 
         /**
          * Check existing state machines first to see if the event can be handled
          */
-        $awaitingMatchers = array_merge(($this->waitingForNextEvent[$event->event] ?? []), ($this->waitingForNextEvent[IEventMatcher::EVENT_MATCH_ANY] ?? []));
+        $awaitingMatchers = array_merge(($this->waitingForNextEvent[$event->event] ?? []),
+            ($this->waitingForNextEvent[IEventMatcher::EVENT_MATCH_ANY] ?? []));
 
         foreach ($awaitingMatchers as $matcher) {
             /* @var $matcher IEventMatcher */
@@ -204,15 +203,14 @@ class CorrelationEngine implements EventEmitterInterface {
          * A new state machine will not be created if an existing state machine suppressed the event
          * or if a state machine of the same class handled the event
          */
-        if (false === $suppress)
-        {
-            $awaitingMatchers = array_merge(($this->initialEventLookup[$event->event] ?? []), ($this->initialEventLookup[IEventMatcher::EVENT_MATCH_ANY] ?? []));
+        if (false === $suppress) {
+            $awaitingMatchers = array_diff(
+                array_merge(($this->initialEventLookup[$event->event] ?? []),
+                    ($this->initialEventLookup[IEventMatcher::EVENT_MATCH_ANY] ?? [])),
+                $skipMatchers /** If this className has already handled this event, don't create another **/
+            );
 
             foreach ($awaitingMatchers as $class) {
-                /** If this className has already handled this event, don't create another **/
-                if (in_array($class, $skipMatchers, true)) {
-                    continue;
-                }
                 $matcher = $this->constructMatcher($class);
                 $result = $matcher->handle($event);
                 if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
@@ -239,20 +237,17 @@ class CorrelationEngine implements EventEmitterInterface {
             }
         }
 
-        if (count($handledMatchers) == 0)
-        {
+        if (count($handledMatchers) == 0) {
             $this->incrStat('unhandled', (string)$event->event);
         }
 
         /** For any matchers that processed this event fire any actions, then update timeout or destroy if complete **/
         $stateChanged = (count($handledMatchers) + count($timedOutMatchers)) > 0;
-        foreach($handledMatchers as $matcher)
-        {
+        foreach ($handledMatchers as $matcher) {
             $matcher->fire();
             $this->addTimeout($matcher);
 
-            if ($matcher->complete())
-            {
+            if ($matcher->complete()) {
                 /** Record stat of matcher completing */
                 $this->incrStat('completed_matcher', get_class($matcher));
                 $this->removeMatcher($matcher);
@@ -261,8 +256,7 @@ class CorrelationEngine implements EventEmitterInterface {
         }
 
         /**  Fire any action and destroy any timed out matchers **/
-        foreach($timedOutMatchers as $matcher)
-        {
+        foreach ($timedOutMatchers as $matcher) {
             $this->removeTimeout($matcher);
             $matcher->fire();
             /** Record stat of matcher timeout */
