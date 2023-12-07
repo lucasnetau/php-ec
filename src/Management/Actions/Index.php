@@ -72,6 +72,8 @@ EOH;
     <body>
         <h1>PHP Event Engine</h1>
         <dl>
+          <dt>State</dt>
+          <dd>{$this->fn(ucfirst($state['scheduler']['state']))}</dd>
           <dt>Command</dt>
           <dd>{$this->fn(\cli_get_process_title() ?: implode(" ", $argv))}</dd>
           <dt>Running Mode</dt>
