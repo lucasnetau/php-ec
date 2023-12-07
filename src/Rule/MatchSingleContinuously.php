@@ -20,8 +20,6 @@ use function count;
  */
 abstract class MatchSingleContinuously extends Rule
 {
-    const EVENTS = [[]];
-
     public function __construct()
     {
         parent::__construct();
@@ -35,6 +33,9 @@ abstract class MatchSingleContinuously extends Rule
         return false;
     }
 
+    /**
+     * @return string[]
+     */
     public function nextAcceptedEvents() : array
     {
         /* Continue to accept the same event type */

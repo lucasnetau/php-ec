@@ -20,6 +20,8 @@ use function count;
  */
 abstract class MatchSingle extends Rule
 {
+    use Rule\Traits\NeverTimesOutTrait;
+
     public function __construct()
     {
         parent::__construct();
