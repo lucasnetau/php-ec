@@ -580,6 +580,7 @@ class Scheduler implements LoggerAwareInterface {
                         if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
                             $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
                             $this->state = new State(State::STARTING);
+                            $this->saveStateHandler->saveStateSync($this->buildState());
                             $this->initialise_input_processes();
                         }
                     }
