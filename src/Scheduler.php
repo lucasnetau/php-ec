@@ -1226,14 +1226,16 @@ class Scheduler implements LoggerAwareInterface {
      * Enable or disable the experimental management server
      * @param bool $enable
      */
-    public function enableManagementServer(bool $enable) {
+    public function enableManagementServer(bool $enable): void
+    {
         $this->enabledManagementServer = $enable;
     }
 
     /**
      * Initialise the management server if enabled
      */
-    protected function initialiseManagementServer() {
+    protected function initialiseManagementServer(): void
+    {
         if ($this->enabledManagementServer) {
             $this->managementServer = new Server($this);
             $this->logger->info("Management server listening on " . ($this->managementServer->getListeningAddress() ?? 'Unable to retrieve address'));
