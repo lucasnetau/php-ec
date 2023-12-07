@@ -319,7 +319,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->input_processes[$id] = $cmd;
         /** Log any errors received. Wrapper will call exit after error */
         $cmd->on('data', function(Event $event) {
-            $this->engine->handle($event);
+            $this->handleEvent($event);
         });
         $cmd->on('error', function(Throwable $error) use ($id) {
             $this->logger->error("{id}", ['id'=> $id, 'exception' => $error,]);
@@ -411,7 +411,7 @@ class Scheduler implements LoggerAwareInterface {
                     /**
                      * Pass the event to the engine to be handled
                      */
-                    $this->engine->handle($event);
+                    $this->handleEvent($event);
 
                     /**
                      * If we are running in real time then schedule a timer for the next timeout
@@ -497,6 +497,16 @@ class Scheduler implements LoggerAwareInterface {
                 $this->shutdown();
             }
         });
+    }
+
+    public function handleEvent(Event $event): void
+    {
+        try {
+            $this->engine->handle($event);
+        } catch (Throwable $ex) {
+            $this->logger->emergency("Rules must not throw exceptions", ['exception' => $ex]);
+            exit(-1);
+        }
     }
 
     /**
@@ -817,7 +827,7 @@ class Scheduler implements LoggerAwareInterface {
             /**
              * Pass the event to the engine to be handled
              */
-            $this->engine->handle($event);
+            $this->handleEvent($event);
 
             /**
              * If we are running in real time then schedule a timer for the next timeout
@@ -861,7 +871,7 @@ class Scheduler implements LoggerAwareInterface {
             if (null === $this->newEventAction) {
                 $this->loop->futureTick(function() use ($event) {
                     /** We handle the new event in a future tick to ensure we don't get stuck in a loop if a timed out Rule is emitting an event */
-                    $this->engine->handle($event);
+                    $this->handleEvent($event);
                 });
             } else {
                 $action = new Action($this->newEventAction, $event);
@@ -928,7 +938,7 @@ class Scheduler implements LoggerAwareInterface {
         /** Initialise Heartbeat timer */
         if ($this->heartbeat_seconds > 0) {
             $cb = function() {
-                $this->engine->handle(new Event(['event' => static::CONTROL_MSG_HEARTBEAT]));
+                $this->handleEvent(new Event(['event' => static::CONTROL_MSG_HEARTBEAT]));
             };
             if ($this->heartbeat_initialDelay === 0) {
                 //No delay, schedule straight away
@@ -1024,7 +1034,7 @@ class Scheduler implements LoggerAwareInterface {
          * Notify any rules listening for a Stop event that we are stopping
          */
         $this->logger->debug( "Notify CorrelationEngine that we are stopping");
-        $this->engine->handle(new Event(['event' => static::CONTROL_MSG_STOP]));
+        $this->handleEvent(new Event(['event' => static::CONTROL_MSG_STOP]));
 
         /** Check if we have any running action commands, if we do then some actions may not have completed and/or need to flush+complete tasks. Send them a SIGTERM to complete their shutdown */
         if (count($this->runningActions) > 0) {
