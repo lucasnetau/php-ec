@@ -28,6 +28,7 @@ use function abs;
 use function array_key_exists;
 use function array_keys;
 use function array_merge;
+use function class_exists;
 use function fwrite;
 use function get_class;
 use function in_array;
@@ -90,6 +91,11 @@ class CorrelationEngine implements EventEmitterInterface {
     protected array $statistics = [];
 
     const MAX_TIME_VARIANCE = 600; // In seconds
+
+    protected array $emitMapping = [
+        'event' => Event::class,
+        'action' => Action::class,
+    ];
 
     /**
      * CorrelationEngine constructor.
@@ -313,21 +319,39 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function handleEmit(object $data) : void
     {
-        /** Check if this is an event */
-        if (is_a($data, Event::class))
-        {
-            $this->incrStat('emit_event', $data->event);
-            $this->emit('event', [$data]);
+        foreach($this->emitMapping as $key => $class) {
+            if (is_a($data, $class))
+            {
+                if (is_a($data, Event::class)) {
+                    $name = $data->event;
+                } elseif (is_a($data, Action::class)){
+                    $name = $data->getCmd();
+                } else {
+                    $name = $data::class;
+                }
+                $this->incrStat("emit_{$key}", $name);
+                $this->emit($key, [$data]);
+                return;
+            }
         }
-        elseif (is_a($data, Action::class))
-        {
-            $this->incrStat('emit_action', $data->getCmd());
-            $this->emit('action', [$data]);
+
+        throw new RuntimeException("Expected rules to emit an IEvent or Action. Unable to handle object of class " . get_class($data));
+    }
+
+    /**
+     * Add customer objects that map be emitted and how they map to the Scheduler emit types
+     */
+    public function addCustomEmit(string $emit_name, string $className): void
+    {
+        if (!ctype_alpha($emit_name)) {
+            throw new RuntimeException('Custom emit types must be alpha with no spaces');
         }
-        else
-        {
-            throw new RuntimeException("Expected rules to emit an IEvent or Action. Unable to handle object of class " . get_class($data));
+
+        if (!class_exists($className)) {
+            throw new RuntimeException("Unknown class $className");
         }
+
+        $this->emitMapping[$emit_name] = $className;
     }
 
     /**
