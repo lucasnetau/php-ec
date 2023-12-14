@@ -25,7 +25,7 @@ use function in_array;
 use function array_key_first;
 use function array_key_last;
 use function array_map;
-use function spl_object_hash;
+use function spl_object_id;
 use function method_exists;
 use function json_encode;
 use function json_decode;
@@ -419,7 +419,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     {
         $return = [];
         $return['events'] = array_map(function ($event) {
-            return spl_object_hash($event);
+            return spl_object_id($event);
         }, $this->consumedEvents);
 
         $return['id'] = $this->instanceId;

@@ -35,7 +35,7 @@ use function in_array;
 use function ini_restore;
 use function ini_set;
 use function round;
-use function spl_object_hash;
+use function spl_object_id;
 use function count;
 use function is_a;
 use function array_multisort;
@@ -215,7 +215,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 $result = $matcher->handle($event);
                 if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
                     $handledMatchers[] = $matcher;
-                    $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
+                    $this->eventProcessors[spl_object_id($matcher)] = $matcher;
                     $this->incrStat('init_matcher', $class);
                     $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
 
@@ -354,7 +354,7 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     protected function removeMatcher(IEventMatcher $matcher) : void {
         $this->clearWatchForEvents($matcher);
-        unset($this->eventProcessors[spl_object_hash($matcher)]);
+        unset($this->eventProcessors[spl_object_id($matcher)]);
     }
 
     /**
@@ -366,7 +366,7 @@ class CorrelationEngine implements EventEmitterInterface {
     {
         foreach($events as $eventName)
         {
-            $this->waitingForNextEvent[$eventName][spl_object_hash($matcher)] = $matcher;
+            $this->waitingForNextEvent[$eventName][spl_object_id($matcher)] = $matcher;
         }
     }
 
@@ -377,7 +377,7 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function removeWatchForEvents(IEventMatcher $matcher, array $events) : void
     {
-        $matcherHash = spl_object_hash($matcher);
+        $matcherHash = spl_object_id($matcher);
         foreach($events as $eventName)
         {
             unset($this->waitingForNextEvent[$eventName][$matcherHash]);
@@ -398,7 +398,7 @@ class CorrelationEngine implements EventEmitterInterface {
      * @param IEventMatcher $matcher
      */
     public function clearWatchForEvents(IEventMatcher $matcher) : void {
-        $matcherHash = spl_object_hash($matcher);
+        $matcherHash = spl_object_id($matcher);
         $events = [];
         foreach(array_keys($this->waitingForNextEvent) as $eventName) {
             if (array_key_exists($matcherHash, $this->waitingForNextEvent[$eventName])) {
@@ -422,7 +422,7 @@ class CorrelationEngine implements EventEmitterInterface {
         else
         {
             //@TODO check if we really need to add this in case where timeout is the same as current
-            $this->timeouts[spl_object_hash($matcher)] = ['timeout' => $timeout, 'matcher' => $matcher];
+            $this->timeouts[spl_object_id($matcher)] = ['timeout' => $timeout, 'matcher' => $matcher];
             $this->timeoutsSorted = false;
         }
     }
@@ -433,7 +433,7 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function removeTimeout(IEventMatcher $matcher) : void
     { 
-        unset($this->timeouts[spl_object_hash($matcher)]);
+        unset($this->timeouts[spl_object_id($matcher)]);
     }
 
     /**
@@ -549,7 +549,7 @@ class CorrelationEngine implements EventEmitterInterface {
 
             foreach($matcher->getEventChain() as $event)
             {
-                $event_hash = spl_object_hash($event);
+                $event_hash = spl_object_id($event);
                 if (isset($state['events'][$event_hash]))
                 {
                     continue;
@@ -607,7 +607,7 @@ class CorrelationEngine implements EventEmitterInterface {
             }
             $matcher->resolveEvents($events);
             $this->attachListeners($matcher);
-            $this->eventProcessors[spl_object_hash($matcher)] = $matcher;
+            $this->eventProcessors[spl_object_id($matcher)] = $matcher;
             $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
         }
         ini_restore('unserialize_callback_func');
