@@ -6,6 +6,7 @@ use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\Message\Response;
+use function array_key_exists;
 use function array_keys;
 use function array_map;
 use function array_reverse;
@@ -23,11 +24,15 @@ class Index {
         $scheduler = $request->getAttribute('scheduler');
 
         $state = $scheduler->buildState();
+        $config = $scheduler->getConfig();
 
         $running_mode = $state['engine']['eventstream_live'] ? 'Live Mode' : 'Batch Mode';
         $start_time = new DateTimeImmutable('@' . $_SERVER['REQUEST_TIME']);
 
-        $input_process_list = '<li>' . implode('</li><li>', $state['scheduler']['input']['running']) . '</li>';
+        $input_process_list = '';
+        foreach($config['input'] as $input_id => $input_config) {
+            $input_process_list .= "<tr><td>$input_id</td><td>" . (in_array($input_id, $state['scheduler']['input']['running']) ? '🏃' : '🛑') . "</td></tr>";
+        }
 
         $opcache_status = opcache_get_status(false);
 
@@ -67,6 +72,7 @@ EOH;
 <!DOCTYPE HTML>
 <html lang="en">
     <head>
+        <meta charset="utf-8">
         <title>Event Engine Management Console</title>
     </head>
     <body>
@@ -98,7 +104,17 @@ EOH;
         <hr>
         <h2>Input Processes</h2>
         <h3>Running</h3>
-        <ul>$input_process_list</ul>
+        <table>
+            <tbody>
+            $input_process_list
+            </tbody>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>State</th>
+                </tr>
+            </thead>
+        </table>
         <hr>
         <h2>Action Processes</h2>
         <dl>

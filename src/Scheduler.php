@@ -1251,4 +1251,12 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->info("Management server listening on " . ($this->managementServer->getListeningAddress() ?? 'Unable to retrieve address'));
         }
     }
+
+    public function getConfig() : array {
+        return [
+            'rules' => $this->rules,
+            'input' => $this->input_processes_config,
+            'actions' => $this->actionConfig,
+        ];
+    }
 }
