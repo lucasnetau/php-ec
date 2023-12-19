@@ -43,6 +43,7 @@ use function array_map;
 use function array_sum;
 use function array_slice;
 use function serialize;
+use function uasort;
 use function unserialize;
 use function implode;
 
@@ -444,9 +445,8 @@ class CorrelationEngine implements EventEmitterInterface {
     {
         //Sort by timeout
         if (false === $this->timeoutsSorted) {
-            array_multisort(array_map(function ($element) {
-                return $element['timeout']->format('Ydm His');
-            }, $this->timeouts), SORT_ASC, $this->timeouts);
+            uasort($this->timeouts, function ($a, $b) { return $a['timeout']->format('Ydm His') <=> $b['timeout']->format('Ydm His'); });
+
             $this->timeoutsSorted = true;
         }
         return $this->timeouts;
