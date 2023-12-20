@@ -38,8 +38,6 @@ use function round;
 use function spl_object_id;
 use function count;
 use function is_a;
-use function array_multisort;
-use function array_map;
 use function array_sum;
 use function array_slice;
 use function serialize;
