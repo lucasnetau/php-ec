@@ -859,7 +859,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->initialiseManagementServer();
 
         /** Restore the state of the scheduler and engine */
-        $this->saveStateHandler = new FileAdapter(sys_get_temp_dir(), $this->saveFileName, $this->logger, $this->loop);
+        $this->saveStateHandler = new FileAdapter($this->saveFileName, $this->logger, $this->loop);
         $this->restoreState();
 
         /**
@@ -881,6 +881,7 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Handle request to run an action */
         $this->engine->on('action', function(Action $action) {
+            //@TODO Implement queue to rate limit execution of actions
             $actionName = $action->getCmd();
             if (isset($this->actionConfig[$actionName]))
             {

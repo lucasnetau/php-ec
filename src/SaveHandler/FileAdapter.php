@@ -57,7 +57,7 @@ class FileAdapter implements SaveHandlerInterface {
 
     protected bool $asyncFaulty = false;
 
-    public function __construct( protected string $savePath, protected string $saveFileName, protected LoggerInterface $logger, protected ?LoopInterface $loop ) {
+    public function __construct( protected string $saveFileName, protected LoggerInterface $logger, protected ?LoopInterface $loop ) {
         $this->loop ??= Loop::get();
     }
 
