@@ -28,13 +28,20 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
     protected bool $running = false;
     protected LoopInterface $loop;
 
+    /** @var array The environment for this source function */
+    protected array $env;
+
     public function __construct() {
         $this->loop = Loop::get();
     }
 
-    public function start(): void
+    /**
+     * @var null|array $env Set the environment for the source function or inherit if null
+     */
+    public function start(null|array $env = null): void
     {
         $this->running = true;
+        $this->env = $env ?? getenv();
         $this->functionStart();
     }
 

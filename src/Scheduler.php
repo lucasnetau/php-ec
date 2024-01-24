@@ -315,6 +315,7 @@ class Scheduler implements LoggerAwareInterface {
     {
         $config = $this->input_processes_config[$id];
         $cmd = clone $config['cmd'];
+        $env = $config['env'];
 
         $this->input_processes[$id] = $cmd;
         /** Log any errors received. Wrapper will call exit after error */
@@ -342,8 +343,8 @@ class Scheduler implements LoggerAwareInterface {
                 $this->shutdown();
             }
         });
-        $this->loop->futureTick(static function() use ($cmd) {
-            $cmd->start();
+        $this->loop->futureTick(static function() use ($cmd, $env) {
+            $cmd->start($env);
         });
     }
 
