@@ -32,8 +32,12 @@ Components are:
  * Events: An event is made up of a type, date, id, and data
  * Event Stream: A time ordered stream of events
  * Input Processes: programs that provide event streams into PHP-EC. These can be PHP scripts, NodeJS, Bash script etc.
- * Rules: Rules define a group of events to be processed within a defined time period. Rules can call actions when the Rule is matched or if the defined time period is exceeded (timeout)
  * Actions: Programs that perform tasks when requested. This may be writing to a database, sending an email etc.
+
+ * Rules: Rules define a set of events to be processed within a defined time period. Once a Rule is matched or a defined timeout period is exceeded the rule can:
+   * run Actions (for example send email, write to database)
+   * emit Events (emit a new or modified event for another Rule to handle \[chaining rules\])
+   * run an additional input process (load more data into the system)
 
 ### Cron Like Rules
 PHP-EC supports rules that can call actions based on Cron time expressions, system start and system shutdown.
