@@ -285,10 +285,20 @@ class Scheduler implements LoggerAwareInterface {
      * @param string|null $wd Working directory for the process, defaults to current PHP working directory of the Scheduler
      * @param array $env Key-value pair describing Environmental variables to pass to the process
      * @param bool $essential If true, Scheduler will shut everything down if this input process exit with no errorCode or doesn't exist
+     * @param bool $autostart Whether to start the process automatically on startup or when requested
      */
-    public function register_input_process(string|int $id, string|array|SourceFunction $cmd, ?string $wd = null, array $env = [], bool $essential = false) : void
+    public function register_input_process(string|int $id, string|array|SourceFunction $cmd, ?string $wd = null, array $env = [], bool $essential = false, bool $autostart = true) : void
     {
-        $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'essential' => $essential];
+        $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'essential' => $essential, 'autostart' => $autostart];
+    }
+
+    /**
+     * @param string|int $id
+     * @return void
+     */
+    public function unregister_input_process(string|int $id) : void
+    {
+        unset($this->input_processes_config[$id]);
     }
 
     /**
@@ -297,11 +307,9 @@ class Scheduler implements LoggerAwareInterface {
     public function initialise_input_processes() : void {
         $this->logger->debug('Initialising input processes');
         foreach ($this->input_processes_config as $id => $config) {
-            if ($config['cmd'] instanceof SourceFunction) {
-                $this->setup_source_function($id);
-            } else {
+            if ($config['autostart'] === true) {
                 try {
-                    $this->start_input_process($id);
+                    $this->initialise_input_process($id);
                 } catch (RuntimeException $ex) {
                     $this->logger->emergency("An input process failed to start during initialisation.", ['exception' => $ex]);
                     exit(1);
@@ -311,7 +319,16 @@ class Scheduler implements LoggerAwareInterface {
         $this->state = new State(State::RUNNING);
     }
 
-    public function setup_source_function(int|string $id): void
+    public function initialise_input_process(int|string $id) : Process|SourceFunction {
+        $config = $this->input_processes_config[$id];
+        if ($config['cmd'] instanceof SourceFunction) {
+            return $this->setup_source_function($id);
+        } else {
+            return $this->start_input_process($id);
+        }
+    }
+
+    public function setup_source_function(int|string $id): SourceFunction
     {
         $config = $this->input_processes_config[$id];
         $cmd = clone $config['cmd'];
@@ -346,6 +363,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->loop->futureTick(static function() use ($cmd, $env) {
             $cmd->start($env);
         });
+        return $cmd;
     }
 
     /**
@@ -918,6 +936,19 @@ class Scheduler implements LoggerAwareInterface {
             {
                 $this->logger->error("Unable to start unknown action " . json_encode($action));
             }
+        });
+
+        /** Handle request to run an on demand source */
+        $this->engine->on('source', function(Scheduler\Messages\ExecuteSource $execute) {
+            $config = $this->input_processes_config[$execute->getCmd()];
+            $rndid = $execute->getCmd() . '_' . bin2hex(random_bytes(4)); //Generate unique ID for the on demand run
+            $env = ($config['env'] ?? []) + $execute->getVars();
+            //Register the on demand source
+            $this->register_input_process($rndid, $config['cmd'], $config['wd'], $env, false, false);
+            $process = $this->initialise_input_process($rndid);
+            $process->on('exit', function() use ($rndid) {
+                $this->unregister_input_process($rndid); //Remove config once process exits
+            });
         });
 
         /** If we have any errored actions then we replay them and attempt recovery. In normal state we initialise the input processes */

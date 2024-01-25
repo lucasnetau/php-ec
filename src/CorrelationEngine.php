@@ -13,6 +13,7 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use DateInterval;
 use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
+use EdgeTelemetrics\EventCorrelation\Scheduler\Messages\ExecuteSource;
 use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;
@@ -94,6 +95,7 @@ class CorrelationEngine implements EventEmitterInterface {
     protected array $emitMapping = [
         'event' => Event::class,
         'action' => Action::class,
+        'source' => ExecuteSource::class,
     ];
 
     /**
