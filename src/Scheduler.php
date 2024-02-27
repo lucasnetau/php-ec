@@ -940,15 +940,19 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Handle request to run an on demand source */
         $this->engine->on('source', function(Scheduler\Messages\ExecuteSource $execute) {
-            $config = $this->input_processes_config[$execute->getCmd()];
-            $rndid = $execute->getCmd() . '_' . bin2hex(random_bytes(4)); //Generate unique ID for the on demand run
-            $env = ($config['env'] ?? []) + $execute->getVars();
-            //Register the on demand source
-            $this->register_input_process($rndid, $config['cmd'], $config['wd'], $env, false, false);
-            $process = $this->initialise_input_process($rndid);
-            $process->on('exit', function() use ($rndid) {
-                $this->unregister_input_process($rndid); //Remove config once process exits
-            });
+            if (isset($this->input_processes_config[$execute->getCmd()])) {
+                $config = $this->input_processes_config[$execute->getCmd()];
+                $rndid = $execute->getCmd() . '_' . bin2hex(random_bytes(4)); //Generate unique ID for the on demand run
+                $env = ($config['env'] ?? []) + $execute->getVars();
+                //Register the on demand source
+                $this->register_input_process($rndid, $config['cmd'], $config['wd'], $env, false, false);
+                $process = $this->initialise_input_process($rndid);
+                $process->on('exit', function() use ($rndid) {
+                    $this->unregister_input_process($rndid); //Remove config once process exits
+                });
+            } else {
+                $this->logger->error("Unable to start unknown on demand source " . json_encode($execute->getCmd()));
+            }
         });
 
         /** If we have any errored actions then we replay them and attempt recovery. In normal state we initialise the input processes */
