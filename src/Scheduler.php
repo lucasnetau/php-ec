@@ -465,8 +465,13 @@ class Scheduler implements LoggerAwareInterface {
          */
         $process->stdout->on('close', function() use ($id, $process) {
             if (!$this->state->isStopping() && $process->isRunning()) {
-                $this->logger->critical("{id} STDOUT closed unexpectedly, terminating process", ['id' => $id,]);
-                $process->terminate(SIGTERM);
+                //Use a timer to get around a race condition in Alpine linux where the process hasn't been reaped yet (SIGCHLD delayed?)
+                $this->loop->addTimer(0.1, function() use ($id, $process) {
+                    if ($process->isRunning()) {
+                        $this->logger->critical("{id} STDOUT closed unexpectedly, terminating process", ['id' => $id,]);
+                        $process->terminate(SIGTERM);
+                    }
+                });
             }
         });
 
