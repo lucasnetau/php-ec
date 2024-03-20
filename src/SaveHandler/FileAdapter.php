@@ -23,6 +23,7 @@ use function file_put_contents;
 use function hrtime;
 use function json_decode;
 use function json_encode;
+use function json_last_error;
 use function json_last_error_msg;
 use function random_bytes;
 use function realpath;
@@ -132,6 +133,10 @@ class FileAdapter implements SaveHandlerInterface {
             $this->logger->debug('Initialised save handler process');
         }
         $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        if ($state === false) {
+            $this->emit('save:failed', ['exception' => new RuntimeException("Encoding application state failed. " . json_last_error_msg())] );
+            return;
+        }
 
         $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
         $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state, 'time' => hrtime(true)], $uniqid);
@@ -151,7 +156,10 @@ class FileAdapter implements SaveHandlerInterface {
             $this->emit('save:failed', ['exception' => new RuntimeException("Error creating temporary save state file, check filesystem")] );
             return;
         }
-        $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
+        $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            $this->logger->warning('Error encoding application state');
+        }
         if ($state === false) {
             $this->emit('save:failed', ['exception' => new RuntimeException("Encoding application state failed. " . json_last_error_msg())] );
             return;
@@ -172,6 +180,7 @@ class FileAdapter implements SaveHandlerInterface {
             $this->logger->warning('It took ' . $this->saveStateLastDuration . ' milliseconds to save state to disk');
         }
         $this->logger->debug('State saved to filesystem');
+        $this->asyncFailureCount = 0; //Reset the async failure count to re-enable async save after a successful sync save
     }
 
     public function asyncSaveInProgress(): bool
