@@ -90,7 +90,7 @@ abstract class Cron extends Rule
     public function nextAcceptedEvents() : array
     {
         $nextEvents = parent::nextAcceptedEvents();
-        if ((static::CRON_SCHEDULE === self::ON_SHUTDOWN || (count($this->consumedEvents) === 0 && empty($nextEvents))) && !in_array(Scheduler::CONTROL_MSG_STOP, $nextEvents, true)) {
+        if ((static::CRON_SCHEDULE === self::ON_SHUTDOWN || (empty($this->consumedEvents) && empty($nextEvents))) && !in_array(Scheduler::CONTROL_MSG_STOP, $nextEvents, true)) {
             $nextEvents[] = Scheduler::CONTROL_MSG_STOP;
         }
         return $nextEvents;
