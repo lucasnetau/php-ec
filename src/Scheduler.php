@@ -608,7 +608,7 @@ class Scheduler implements LoggerAwareInterface {
                         }
                     }
                     /** Release memory used by the inflight action table */
-                    if (count($this->inflightActionCommands) === 0) {
+                    if (empty($this->inflightActionCommands)) {
                         $this->inflightActionCommands = [];
 
                         if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
@@ -961,7 +961,7 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         /** If we have any errored actions then we replay them and attempt recovery. In normal state we initialise the input processes */
-        if (count($this->erroredActionCommands)) {
+        if ($this->erroredActionCommands) {
             $this->logger->notice('Beginning failed action recovery process');
             $this->state = new State(State::RECOVERY);
             while(count($this->erroredActionCommands) > 0) {
@@ -1115,7 +1115,7 @@ class Scheduler implements LoggerAwareInterface {
         }
         $this->loop->futureTick(function() {
             $this->loop->stop();
-            if (count($this->inflightActionCommands) > 0 ) {
+            if ($this->inflightActionCommands) {
                 $this->logger->error("There were still inflight action commands at shutdown.");
                 $this->state = new State(State::STOPPED_UNCLEAN);
             } else {

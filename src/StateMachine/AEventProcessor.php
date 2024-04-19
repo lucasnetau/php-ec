@@ -203,11 +203,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function acceptEvent(Event $event) : bool
     {
-        if (0 === count($this->consumedEvents)) {
-            return $this->acceptInitialEvent($event);
-        }
-
-        return $this->acceptSubsequentEvent($event);
+        return empty($this->consumedEvents) ? $this->acceptInitialEvent($event) : $this->acceptSubsequentEvent($event);
     }
 
     /**
@@ -253,11 +249,8 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @return Event|null
      */
     public function getFirstEvent() : ?Event {
-        if (0 === count($this->consumedEvents))
-        {
-            return null;
-        }
-        return $this->consumedEvents[array_key_first($this->consumedEvents)];
+        $lastKey = array_key_first($this->consumedEvents);
+        return ($lastKey === null) ? null : $this->consumedEvents[$lastKey];
     }
 
     /**
@@ -265,11 +258,8 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @return Event|null
      */
     public function getLastEvent() : ?Event {
-        if (0 === count($this->consumedEvents))
-        {
-            return null;
-        }
-        return $this->consumedEvents[array_key_last($this->consumedEvents)];
+        $firstKey = array_key_first($this->consumedEvents);
+        return ($firstKey === null) ? null : $this->consumedEvents[$firstKey];
     }
 
     /**
@@ -317,11 +307,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function firstEventDateTime(): ?DateTimeInterface
     {
-        if (0 === count($this->consumedEvents))
-        {
-            return null;
-        }
-        return $this->consumedEvents[array_key_first($this->consumedEvents)]->datetime;
+        return $this->consumedEvents[array_key_first($this->consumedEvents)]?->datetime;
     }
 
     /**
@@ -330,11 +316,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function lastSeenEventDateTime(): ?DateTimeInterface
     {
-        if (0 === count($this->consumedEvents))
-        {
-            return null;
-        }
-        return $this->consumedEvents[array_key_last($this->consumedEvents)]->datetime;
+        return $this->consumedEvents[array_key_last($this->consumedEvents)]?->datetime;
     }
 
     /**
@@ -363,8 +345,8 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
          * > We have completed our task
          */
         if (self::NO_TIMEOUT_STRING == static::TIMEOUT
-            || (false === self::$eventstream_live && static::HISTORICAL_IGNORE_TIMEOUT)
-            || 0 == count($this->consumedEvents)
+            || (!self::$eventstream_live && static::HISTORICAL_IGNORE_TIMEOUT)
+            || empty($this->consumedEvents)
             || $this->complete())
         {
             $this->timeout = null;
