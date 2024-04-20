@@ -72,6 +72,7 @@ abstract class Cron extends Rule
             }
             if ($event->event === Scheduler::CONTROL_MSG_STOP) {
                 $this->isTimedOut = true;
+                $handled |= self::EVENT_TIMEOUT;
             }
         }
         return $handled;
