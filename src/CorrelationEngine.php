@@ -184,10 +184,9 @@ class CorrelationEngine implements EventEmitterInterface {
                 $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
             }
 
-            // If we are timed out then remove any future event watching and flag the matcher for timeout processing.
+            // If we are timed out then flag the matcher for timeout processing.
             if ($this->isFlagSet($result, $matcher::EVENT_TIMEOUT)) {
                 $timedOutMatchers[] = $matcher;
-                $this->removeWatchForEvents($matcher, $expecting);
             }
 
             //Matcher has told us to suppress further processing of this event.
