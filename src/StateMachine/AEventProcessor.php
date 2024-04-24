@@ -249,8 +249,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @return Event|null
      */
     public function getFirstEvent() : ?Event {
-        $lastKey = array_key_first($this->consumedEvents);
-        return ($lastKey === null) ? null : $this->consumedEvents[$lastKey];
+        return $this->consumedEvents[array_key_first($this->consumedEvents)] ?? null;
     }
 
     /**
@@ -258,8 +257,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @return Event|null
      */
     public function getLastEvent() : ?Event {
-        $firstKey = array_key_first($this->consumedEvents);
-        return ($firstKey === null) ? null : $this->consumedEvents[$firstKey];
+        return $this->consumedEvents[array_key_last($this->consumedEvents)] ?? null;
     }
 
     /**
@@ -307,7 +305,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function firstEventDateTime(): ?DateTimeInterface
     {
-        return $this->consumedEvents[array_key_first($this->consumedEvents)]?->datetime;
+        return ($this->consumedEvents[array_key_first($this->consumedEvents)] ?? null)?->datetime;
     }
 
     /**
@@ -316,7 +314,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function lastSeenEventDateTime(): ?DateTimeInterface
     {
-        return $this->consumedEvents[array_key_last($this->consumedEvents)]?->datetime;
+        return ($this->consumedEvents[array_key_last($this->consumedEvents)] ?? null)?->datetime;
     }
 
     /**
