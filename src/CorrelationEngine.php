@@ -30,6 +30,7 @@ use function array_key_exists;
 use function array_keys;
 use function array_merge;
 use function class_exists;
+use function error_log;
 use function fwrite;
 use function get_class;
 use function in_array;
@@ -141,24 +142,23 @@ class CorrelationEngine implements EventEmitterInterface {
         /** Record that we have seen an event of this type */
         $this->incrStat('seen', (string)$event->event);
 
-        /**
-         * If the event stream is live we want to make sure the event timestamp is within
-         *  MAX_TIME_VARIANCE seconds of the current time, otherwise we will set it to the server time.
-         */
-        if (true === $this->eventstream_live) {
+
+        if ($this->eventstream_live) {
+            /**
+             * If the event stream is live we want to make sure the event timestamp is within
+             *  MAX_TIME_VARIANCE seconds of the current time, otherwise we will set it to the server time.
+             */
             $now = new DateTimeImmutable();
             if (abs($now->getTimestamp() - $event->datetime->getTimestamp()) > (self::MAX_TIME_VARIANCE)) {
                 echo "Correcting received time to {$now->format('c')}\n";
                 $event->setReceivedTime($now);
             }
-        }
-
-        /** When we are parsing historical event stream data manually trigger any timeouts up till the current event (CheckTimeouts triggers event prior to the time passed in)
-         * Any timeouts at the current time will be triggered after handling the current incoming event
-         * @TODO This might not be the best place to call this where multiple stream interlace with different timestamps.
-         * @TODO This should be moved to checking if a matcher would handle the event then to call it's timeout check first and other items.
-         */
-        if (false === $this->eventstream_live) {
+        } else {
+            /** When we are parsing historical event stream data manually trigger any timeouts up till the current event (CheckTimeouts triggers event prior to the time passed in)
+             * Any timeouts at the current time will be triggered after handling the current incoming event
+             * @TODO This might not be the best place to call this where multiple stream interlace with different timestamps.
+             * @TODO This should be moved to checking if a matcher would handle the event then to call it's timeout check first and other items.
+             */
             $this->checkTimeouts($event->datetime->modify('-1 second'));
         }
 
