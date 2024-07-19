@@ -448,8 +448,7 @@ class CorrelationEngine implements EventEmitterInterface {
     {
         //Sort by timeout
         if (false === $this->timeoutsSorted) {
-            uasort($this->timeouts, function ($a, $b) { return $a['timeout']->format('Ydm His') <=> $b['timeout']->format('Ydm His'); });
-
+            uasort($this->timeouts, function ($a, $b) { return $a['timeout'] <=> $b['timeout']; });
             $this->timeoutsSorted = true;
         }
         return $this->timeouts;
