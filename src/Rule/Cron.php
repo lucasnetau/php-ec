@@ -13,6 +13,7 @@ namespace EdgeTelemetrics\EventCorrelation\Rule;
 
 use Cron\CronExpression;
 use DateTimeImmutable;
+use DateTimeInterface;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Rule;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
@@ -47,6 +48,11 @@ abstract class Cron extends Rule
      */
     private CronExpression $cron;
 
+    /**
+     * @var ?DateTimeInterface $cronLastRun Last time cron was executed
+     */
+    private ?DateTimeInterface $cronLastRun = null;
+
     public function __construct()
     {
         parent::__construct();
@@ -69,6 +75,7 @@ abstract class Cron extends Rule
                 //Don't track the initialising event directly in the consumed events to allow processing of the static::EVENTS array correctly
                 $this->initEvent = $event;
                 $this->consumedEvents = [];
+                $this->updateTimeout(); //Call this here now that we have initialised initEvent
             }
             if ($event->event === Scheduler::CONTROL_MSG_STOP) {
                 $this->isTimedOut = true;
@@ -154,10 +161,15 @@ abstract class Cron extends Rule
 
     /**
      * @return void
-     * @throws Exception
      */
     public function updateTimeout() : void
     {
+        /** @psalm-suppress RedundantPropertyInitializationCheck */
+        if (!isset($this->initEvent)) {
+            //handle() will call updateTimeout prior to initEvent being set. Return early here
+            $this->timeout = null;
+            return;
+        }
         /** @psalm-suppress TypeDoesNotContainType */
         if (!isset($this->cron) || $this->complete()) {
             $this->timeout = null;
@@ -165,15 +177,22 @@ abstract class Cron extends Rule
             if (static::$eventstream_live) {
                 $currentTime = 'now';
             } else {
+                $times = array_filter([$this->getLastEvent()?->datetime, $this->initEvent, $this->cronLastRun]);
                 /** @var DateTimeImmutable $currentTime */
-                $currentTime = ($this->getLastEvent() ?? $this->initEvent)->datetime;
+                $currentTime = max($times);
             }
-            $this->timeout = DateTimeImmutable::createFromMutable($this->cron->getNextRunDate($currentTime, 0, false, static::TIMEZONE));
+            try {
+                $this->timeout = DateTimeImmutable::createFromMutable($this->cron->getNextRunDate($currentTime, 0, false, static::TIMEZONE));
+            } catch (Exception) {
+                //Cron is invalid
+                $this->timeout = null;
+            }
         }
     }
 
     //Called when the timeout is reached
     public function alarm() : void {
+        $this->cronLastRun = $this->getTimeout();
         $this->onSchedule();
         if (!$this->complete() && !$this->isTimedOut()) {
             $this->updateTimeout();
