@@ -173,7 +173,7 @@ class CorrelationEngine implements EventEmitterInterface {
             $expecting = $matcher->nextAcceptedEvents();
             $result = $matcher->handle($event);
             if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
-                $handledMatchers[] = $matcher;
+                $handledMatchers[spl_object_id($matcher)] = $matcher;
                 $skipMatchers[] = get_class($matcher);
                 /** Update which events we are expecting next **/
                 $this->removeWatchForEvents($matcher, $expecting);
@@ -186,7 +186,7 @@ class CorrelationEngine implements EventEmitterInterface {
 
             // If we are timed out then flag the matcher for timeout processing.
             if ($this->isFlagSet($result, $matcher::EVENT_TIMEOUT)) {
-                $timedOutMatchers[] = $matcher;
+                $timedOutMatchers[spl_object_id($matcher)] = $matcher;
             }
 
             //Matcher has told us to suppress further processing of this event.
@@ -214,7 +214,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 $matcher = $this->constructMatcher($class);
                 $result = $matcher->handle($event);
                 if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
-                    $handledMatchers[] = $matcher;
+                    $handledMatchers[spl_object_id($matcher)] = $matcher;
                     $this->eventProcessors[spl_object_id($matcher)] = $matcher;
                     $this->incrStat('init_matcher', $class);
                     $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
@@ -241,8 +241,21 @@ class CorrelationEngine implements EventEmitterInterface {
             $this->incrStat('unhandled', (string)$event->event);
         }
 
-        /** For any matchers that processed this event fire any actions, then update timeout or destroy if complete **/
         $stateChanged = !(empty($handledMatchers) && empty($timedOutMatchers));
+
+        /**  Fire any action and destroy any timed out matchers **/
+        foreach ($timedOutMatchers as $objectId => $matcher) {
+            $this->removeTimeout($matcher);
+            $matcher->fire();
+            /** Record stat of matcher timeout */
+            $this->incrStat('completed_matcher_timeout', get_class($matcher));
+            $this->removeMatcher($matcher);
+            unset($handledMatchers[$objectId]);
+            unset($matcher);
+        }
+        unset($timedOutMatchers);
+
+        /** For any matchers that processed this event fire any actions, then update timeout or destroy if complete **/
         foreach ($handledMatchers as $matcher) {
             $matcher->fire();
             $this->addTimeout($matcher);
@@ -254,16 +267,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 unset($matcher);
             }
         }
-
-        /**  Fire any action and destroy any timed out matchers **/
-        foreach ($timedOutMatchers as $matcher) {
-            $this->removeTimeout($matcher);
-            $matcher->fire();
-            /** Record stat of matcher timeout */
-            $this->incrStat('completed_matcher_timeout', get_class($matcher));
-            $this->removeMatcher($matcher);
-            unset($matcher);
-        }
+        unset($handledMatchers);
 
         /** Flag as dirty except when we have a control message and state doesn't change **/
         if ($stateChanged || !in_array($event->event, Scheduler::CONTROL_MESSAGES, true)) {
