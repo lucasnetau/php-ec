@@ -165,10 +165,10 @@ class ActionHelper extends EventEmitter {
     public function stop() : void {
         if ($this->input->isReadable()) {
             $this->loop->addTimer(1.0, function () {
-                unset($this->logger);
                 $this->input->close();
             });
         } else if ($this->output->isWritable()) {
+            unset($this->logger);
             $this->output->end();
         }
     }
