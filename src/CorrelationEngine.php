@@ -159,7 +159,9 @@ class CorrelationEngine implements EventEmitterInterface {
              * @TODO This might not be the best place to call this where multiple stream interlace with different timestamps.
              * @TODO This should be moved to checking if a matcher would handle the event then to call it's timeout check first and other items.
              */
-            $this->checkTimeouts($event->datetime->modify('-1 second'));
+            if (!in_array($event->event, Scheduler::CONTROL_MESSAGES, true)) {
+                $this->checkTimeouts($event->datetime->modify('-1 second'));
+            }
         }
 
         /**
