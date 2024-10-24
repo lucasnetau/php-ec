@@ -492,6 +492,10 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
             $this->onDone();
         } else {
             $this->onProgress();
+            if ($this->complete()) {
+                $this->onComplete();
+                $this->onDone();
+            }
         }
     }
 
