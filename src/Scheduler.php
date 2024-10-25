@@ -52,6 +52,8 @@ use function gettype;
 use function hrtime;
 use function in_array;
 use function is_array;
+use function is_string;
+use function is_subclass_of;
 use function max;
 use function memory_get_peak_usage;
 use function number_format;
@@ -321,7 +323,7 @@ class Scheduler implements LoggerAwareInterface {
 
     public function initialise_input_process(int|string $id) : Process|SourceFunction {
         $config = $this->input_processes_config[$id];
-        if ($config['cmd'] instanceof SourceFunction) {
+        if (is_subclass_of($config['cmd'], SourceFunction::class)) {
             return $this->setup_source_function($id);
         } else {
             return $this->start_input_process($id);
@@ -331,7 +333,7 @@ class Scheduler implements LoggerAwareInterface {
     public function setup_source_function(int|string $id): SourceFunction
     {
         $config = $this->input_processes_config[$id];
-        $cmd = clone $config['cmd'];
+        $cmd = is_string($config['cmd']) ? new $config['cmd']() : clone $config['cmd'];
         $env = $config['env'];
 
         $this->input_processes[$id] = $cmd;
