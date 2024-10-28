@@ -62,10 +62,13 @@ class Index {
                     <dt>Opcache Statistics</dt>
                     <dd>{$this->fn(implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['opcache_statistics']), array_values($opcache_status['opcache_statistics']))))}</dd>
                     <dt>JIT Statistics</dt>
-                    <dd>{$this->fn(implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['jit']), array_values($opcache_status['jit']))))}</dd>
-                </dl>
 EOH;
-
+            if (($opcache_status['jit'] ?? null) === null) {
+                $opcache_html .= "<dd>Not Available</dd>";
+            } else {
+                $opcache_html .= "<dd>" . implode('</dd><dd>', array_map(function($v1, $v2) {return sprintf('%s=%s', $v1, $v2); }, array_keys($opcache_status['jit']), array_values($opcache_status['jit']))) . "</dd>";
+            }
+            $opcache_html .= "</dl>";
         }
 
         $body = <<<EOT
