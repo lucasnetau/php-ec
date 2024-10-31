@@ -172,13 +172,12 @@ class CorrelationEngine implements EventEmitterInterface {
 
         foreach ($awaitingMatchers as $matcher) {
             /* @var $matcher IEventMatcher */
-            $expecting = $matcher->nextAcceptedEvents();
             $result = $matcher->handle($event);
             if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
                 $handledMatchers[spl_object_id($matcher)] = $matcher;
                 $skipMatchers[] = get_class($matcher);
                 /** Update which events we are expecting next **/
-                $this->removeWatchForEvents($matcher, $expecting);
+                $this->clearWatchForEvents($matcher);
                 if (!$matcher->complete()) {
                     $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
                 }
@@ -384,17 +383,14 @@ class CorrelationEngine implements EventEmitterInterface {
     public function removeWatchForEvents(IEventMatcher $matcher, array $events) : void
     {
         $matcherHash = spl_object_id($matcher);
-        foreach($events as $eventName)
-        {
+        foreach($events as $eventName) {
             unset($this->waitingForNextEvent[$eventName][$matcherHash]);
-            if (0 === count($this->waitingForNextEvent[$eventName]))
-            {
+            if (isset($this->waitingForNextEvent[$eventName]) && !$this->waitingForNextEvent[$eventName]) {
                 unset($this->waitingForNextEvent[$eventName]);
             }
         }
 
-        if (empty($this->waitingForNextEvent))
-        {
+        if (!$this->waitingForNextEvent) {
             $this->waitingForNextEvent = []; // Create new memory to allow GC of Array
         }
     }
