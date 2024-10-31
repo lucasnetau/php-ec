@@ -499,26 +499,23 @@ class CorrelationEngine implements EventEmitterInterface {
                  */
                 $matcher = $timeout['matcher'];
                 $matcher->alarm();
-                $matcher->fire();
+                $matcher->fire(); //@TODO check if only want to do this when it is timed out
                 $triggered++;
-                if ($matcher->isTimedOut())
-                {
+                $this->clearWatchForEvents($matcher);
+                if ($matcher->isTimedOut()) {
                     /** Remove all references if the matcher is timed out */
                     $this->removeTimeout($matcher);
                     /** Record stat of matcher timeout */
                     $this->incrStat('matcher_timeout', get_class($matcher));
                     $this->removeMatcher($matcher);
                     unset($matcher);
-                }
-                else
-                {
+                } else {
                     /** Update the timeout for this matcher after it has alarmed but has not timed out */
                     $this->addTimeout($matcher);
+                    $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
                 }
                 $this->dirty = true;
-            }
-            else
-            {
+            } else {
                 /**
                  * Timeouts are sorted so if current event is before timeout then return early
                  */
