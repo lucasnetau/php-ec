@@ -433,13 +433,6 @@ class Scheduler implements LoggerAwareInterface {
                      * Pass the event to the engine to be handled
                      */
                     $this->handleEvent($event);
-
-                    /**
-                     * If we are running in real time then schedule a timer for the next timeout
-                     */
-                    if ($this->engine->isRealtime()) {
-                        $this->scheduleNextTimeout();
-                    }
                     break;
                 case self::INPUT_ACTION_CHECKPOINT:
                     $this->input_processes_checkpoints[$id] = $rpc->getParams();
@@ -529,6 +522,12 @@ class Scheduler implements LoggerAwareInterface {
     {
         try {
             $this->engine->handle($event);
+            /**
+             * If we are running in real time then schedule a timer for the next timeout
+             */
+            if ($this->engine->isRealtime()) {
+                $this->scheduleNextTimeout();
+            }
         } catch (Throwable $ex) {
             $this->logger->emergency("Rules must not throw exceptions", ['exception' => $ex]);
             exit(-1);
@@ -564,7 +563,7 @@ class Scheduler implements LoggerAwareInterface {
     public function start_action(string $actionName): Process
     {
         $actionConfig = $this->actionConfig[$actionName];
-        /** Handle singleShot processes true === $actionConfig['singleShot'] ||  */
+        /** @TODO: Handle singleShot processes true === $actionConfig['singleShot'] ||  */
         if (!isset($this->runningActions[$actionName])) {
             /** If there is no running action then we initialise the process **/
             if (is_string($actionConfig['cmd'])) {
@@ -642,8 +641,8 @@ class Scheduler implements LoggerAwareInterface {
                 } elseif ($code === 255) { //255 = PHP Fatal exit code
                     $this->logger->critical("Action $actionName exit was due to fatal PHP error");
                 }
-                if ($code !== 0)
-                {
+                /** @TODO What happens if code === 0 with actions un-acked? Log message? */
+                if ($code !== 0) {
                     /** Go through inflight actions and look for any that match our exiting with error action. Mark them as errored, otherwise they stay in the inflight action commands queue */
                     $pid = $process->getPid();
                     if (null !== $pid)
@@ -854,13 +853,6 @@ class Scheduler implements LoggerAwareInterface {
              * Pass the event to the engine to be handled
              */
             $this->handleEvent($event);
-
-            /**
-             * If we are running in real time then schedule a timer for the next timeout
-             */
-            if ($this->engine->isRealtime()) {
-                $this->scheduleNextTimeout();
-            }
         });
     }
 
