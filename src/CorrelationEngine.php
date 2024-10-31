@@ -580,6 +580,11 @@ class CorrelationEngine implements EventEmitterInterface {
             $events[$hash] = $event;
         }
 
+        //Update our state if we are live
+        if (true === $state['eventstream_live']) {
+            $this->setEventStreamLive();
+        }
+
         //Set our handler if we unserialize the engine state and defined classed don't exist anymore (eg Generated Classes)
         ini_set('unserialize_callback_func', 'EdgeTelemetrics\EventCorrelation\handleMissingClass');
         foreach($state['matchers'] as $matcherState)
@@ -605,21 +610,10 @@ class CorrelationEngine implements EventEmitterInterface {
             $matcher->resolveEvents($events);
             $this->attachListeners($matcher);
             $this->eventProcessors[spl_object_id($matcher)] = $matcher;
+            $this->addTimeout($matcher); //No need to call updateTimeout() first, it is done by the unserialisation
             $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
         }
         ini_restore('unserialize_callback_func');
-
-        if (true === $state['eventstream_live'])
-        {
-            $this->setEventStreamLive();
-        }
-        else
-        {
-            foreach($this->eventProcessors as $matcher )
-            {
-                $this->addTimeout($matcher); //No need to call updateTimeout() first, it is done by the unserialisation
-            }
-        }
     }
 
     /**
