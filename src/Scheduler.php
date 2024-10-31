@@ -584,7 +584,7 @@ class Scheduler implements LoggerAwareInterface {
             $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
 
             /** Handler for the Json RPC response */
-            $process_decoded_stdout->on('data', function ($rpc) {
+            $process_decoded_stdout->on('data', function ($rpc) use ($actionName) {
                 if ($rpc instanceof JsonRpcResponse) {
                     if ($rpc->isSuccess()) {
                         /** Once the action has been processed successfully we can discard of our copy of it */
@@ -594,13 +594,16 @@ class Scheduler implements LoggerAwareInterface {
                          * @TODO We need to watch this queue and handle any run-away errors (eg a database been unavailable to ingest events)
                          * @TODO This should be put into a function as we call it both here and when an action terminates unexpectedly
                          */
-                        $error = [
-                            'error' => $rpc->getError(),
-                            'action' => $this->inflightActionCommands[$rpc->getId()]['action'],
-                        ];
-                        $this->erroredActionCommands[] = $error;
-                        unset($this->inflightActionCommands[$rpc->getId()]);
-
+                        if (!array_key_exists($rpc->getId(), $this->inflightActionCommands)) {
+                            $this->logger->error("Instance of $actionName has already been cleaned up or sent invalid id in response");
+                        } else {
+                            $error = [
+                                'error' => $rpc->getError(),
+                                'action' => $this->inflightActionCommands[$rpc->getId()]['action'],
+                            ];
+                            $this->erroredActionCommands[] = $error;
+                            unset($this->inflightActionCommands[$rpc->getId()]);
+                        }
                         $this->logger->error($rpc->getError()->getMessage() . " : " . json_encode($rpc->getError()->getData()));
 
                         if ($this->state->state() === State::RECOVERY) {
