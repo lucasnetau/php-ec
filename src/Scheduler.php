@@ -794,7 +794,7 @@ class Scheduler implements LoggerAwareInterface {
         if (!empty($timeouts)) {
             $nextTimeout = $timeouts[array_key_first($timeouts)];
             $now = new DateTimeImmutable();
-            $difference = $nextTimeout['timeout']->getTimestamp() - $now->getTimestamp();
+            $difference = (float)$nextTimeout['timeout']->format('U.u') - (float)$now->format('U.u');
 
             //If timeout has already past then manually check, this may block if we have fallen behind
             if ($difference <= 0) {
@@ -1134,7 +1134,7 @@ class Scheduler implements LoggerAwareInterface {
         $state['input']['running'] = array_keys($this->input_processes);
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
         $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
-        $state['nextTimeout'] = $this->nextTimer === null ? 'none' : $this->timerScheduledAt->modify($this->nextTimer->getInterval() . ' seconds')->format('c');
+        $state['nextTimeout'] = $this->nextTimer === null ? 'none' : $this->timerScheduledAt->modify("+" . round($this->nextTimer->getInterval() * 1e6) . ' microseconds')->format('c');
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
