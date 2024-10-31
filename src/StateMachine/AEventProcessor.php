@@ -325,7 +325,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     public function acceptEventTime(Event $event) : bool
     {
         $timeout = $this->getTimeout();
-        return (null === $timeout || $event->datetime < $timeout);
+        return (null === $timeout || $event->datetime <= $timeout);
     }
 
     /**
