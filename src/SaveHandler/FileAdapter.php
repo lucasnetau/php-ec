@@ -79,7 +79,7 @@ class FileAdapter implements SaveHandlerInterface {
         $this->asyncSaveInProgress = true;
 
         if ($this->process === null) {
-            $this->process = new Process('exec ' . php_cmd(realpath(__DIR__ . '/../../bin/save_state.php')),
+            $this->process = new Process(php_cmd(realpath(__DIR__ . '/../../bin/save_state.php'), true),
                 dirname($this->saveFileName), ['SAVESTATE_FILENAME' => $this->saveFileName]);
             $this->process->start($this->loop);
 
