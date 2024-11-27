@@ -99,23 +99,51 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
-    function php_cmd(string $filename): string
+    function php_cmd(string $filename, bool $asArray = false): string|array
     {
         if (!file_exists($filename)) {
             $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
         }
-        return escapeshellarg(PHP_BINARY) . " -f " . escapeshellarg($filename) . " --";
+        if ($asArray) {
+            return [
+                PHP_BINARY,
+                "-d",
+                "display_errors=stderr",
+                "-d",
+                "log_errors=no",
+                "-f",
+                $filename,
+                "--",
+            ];
+        } else {
+            return escapeshellarg(PHP_BINARY) . " -d display_errors=stderr -d log_errors=no -f " . escapeshellarg($filename) . " --";
+        }
     }
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
-    function wrap_source_php_cmd(string $filename): string
+    function wrap_source_php_cmd(string $filename, bool $asArray = false): string|array
     {
         if (!file_exists($filename)) {
             $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
         }
         $prepend_file = realpath(__DIR__ . '/../bin/source_prepend.php');
-        return escapeshellarg(PHP_BINARY) . " -d auto_prepend_file=" . escapeshellarg($prepend_file) . " -f " . escapeshellarg($filename) . " --";
+        if ($asArray) {
+            return [
+                PHP_BINARY,
+                "-d",
+                "auto_prepend_file=$prepend_file",
+                "-d",
+                "display_errors=stderr",
+                "-d",
+                "log_errors=no",
+                "-f",
+                $filename,
+                "--",
+            ];
+        } else {
+            return escapeshellarg(PHP_BINARY) . " -d auto_prepend_file=" . escapeshellarg($prepend_file) . " -d display_errors=stderr -d log_errors=no -f " . escapeshellarg($filename) . " --";
+        }
     }
 }
 
