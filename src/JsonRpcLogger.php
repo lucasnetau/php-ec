@@ -21,6 +21,7 @@ use function get_class;
 use function is_resource;
 use function is_scalar;
 use function is_string;
+use function is_writable;
 use function json_encode;
 use function method_exists;
 use function sprintf;
@@ -113,8 +114,13 @@ class JsonRpcLogger extends AbstractLogger
             $this->stream->write($message);
         } elseif ($this->stream instanceof WritableStreamInterface) {
             $this->stream->write(json_encode($message) . "\n");
+        } elseif(is_resource($this->stream)) {
+            $bytes = @fwrite($this->stream, json_encode($message) . "\n");
+            if ($bytes === false) {
+                fwrite(STDERR, json_encode($message) . "\n");
+            }
         } else {
-            fwrite($this->stream, json_encode($message) . "\n");
+            fwrite(STDERR, json_encode($message) . "\n");
         }
     }
 
