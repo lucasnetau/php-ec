@@ -144,11 +144,12 @@ class ActionHelper extends EventEmitter {
      * Helper function to log through to the Scheduler
      * @param string $logLevel
      * @param string $message
-     * @param array $content
+     * @param array $context
      * @return void
      */
-    public function log(string $logLevel, string $message, array $content = []) {
-        $this->logger->log($logLevel, $message, $content);
+    public function log(string $logLevel, string $message, array $context = []): void
+    {
+        $this->logger->log($logLevel, $message, $context);
     }
 
     /**
