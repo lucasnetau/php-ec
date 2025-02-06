@@ -440,7 +440,7 @@ class Scheduler implements LoggerAwareInterface {
                     break;
                 case self::RPC_PROCESS_LOG:
                     //Log action expects logLevel to match \Psr\Log\LogLevel
-                    $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'));
+                    $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'), $rpc->getParam('context') ?? []);
                     break;
                 default:
                     throw new RuntimeException("Unknown json rpc command {$rpc->getMethod()} from input process");
@@ -626,7 +626,7 @@ class Scheduler implements LoggerAwareInterface {
                 } elseif ($rpc instanceof JsonRpcNotification) {
                     if ($rpc->getMethod() === self::RPC_PROCESS_LOG) {
                         //Log action expects logLevel to match \Psr\Log\LogLevel
-                        $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'));
+                        $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'), $rpc->getParam('context') ?? []);
                     }
                 }
             });

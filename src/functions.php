@@ -164,10 +164,15 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcLogMessage')) {
      * Helper function for an input or action process to send a log message to the parent scheduler
      * @param string $level LogLevel per \Psr\Log\LogLevel
      * @param string $message
+     * @param array $context=[]
      * @return JsonRpcNotification
      */
-    function rpcLogMessage(string $level, string $message): JsonRpcNotification {
-        return new JsonRpcNotification(Scheduler::RPC_PROCESS_LOG, ['logLevel' => $level, 'message' => $message ]);
+    function rpcLogMessage(string $level, string $message, array $context = []): JsonRpcNotification {
+        return new JsonRpcNotification(Scheduler::RPC_PROCESS_LOG, [
+            'logLevel' => $level,
+            'message' => $message,
+            'context' => $context,
+        ]);
     }
 }
 

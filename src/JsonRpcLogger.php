@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use DateTimeInterface;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use Psr\Log\AbstractLogger;
 use Psr\Log\LogLevel;
@@ -21,11 +22,9 @@ use function get_class;
 use function is_resource;
 use function is_scalar;
 use function is_string;
-use function is_writable;
 use function json_encode;
 use function method_exists;
 use function sprintf;
-use function strpos;
 
 /**
  * PSR-3 logger that logs via a JsonRpc call.
@@ -81,12 +80,6 @@ class JsonRpcLogger extends AbstractLogger
 
         $this->openStream();
 
-        $message = $this->interpolate($message, $context);
-
-        $message = rpcLogMessage($level, $message);
-
-        $this->write($message);
-
         /**
          * If an Exception object is passed in the context data, it MUST be in the 'exception' key.
          * Logging exceptions is a common pattern and this allows implementors to extract a stack trace
@@ -94,6 +87,17 @@ class JsonRpcLogger extends AbstractLogger
          * the 'exception' key is actually an Exception before using it as such, as it MAY contain anything.
          */
         if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
+            $exception = $context['exception'];
+            unset($context['exception']);
+        }
+
+        $message = $this->interpolate($message, $context);
+
+        $message = rpcLogMessage($level, $message, $context);
+
+        $this->write($message);
+
+        if (isset($exception)) {
             $this->logException($context['exception']);
         }
     }
@@ -127,28 +131,39 @@ class JsonRpcLogger extends AbstractLogger
     /**
      * Interpolates context values into the message placeholders.
      */
-    private function interpolate(string $message, array $context): string
+    private function interpolate(string $message, array &$context): string
     {
-        if (strpos($message, '{') === false) {
+        if (!str_contains($message, '{')) {
             return $message;
         }
 
         $replacements = [];
         foreach ($context as $key => $val) {
-            if ($val === null || is_scalar($val) || (\is_object($val) && method_exists($val, '__toString'))) {
-                $replacements["{{$key}}"] = $val;
-            } elseif ($val instanceof \DateTimeInterface) {
-                $replacements["{{$key}}"] = $val->format(\DateTime::RFC3339);
-            } elseif (\is_object($val)) {
-                $replacements["{{$key}}"] = '{object ' . \get_class($val) . '}';
-            } elseif (\is_resource($val)) {
-                $replacements["{{$key}}"] = '{resource}';
-            } else {
-                $replacements["{{$key}}"] = json_encode($val);
+            if (str_contains($message, '{' . $key . '}')) {
+                $replacements["{{$key}}"] = $this->stringify($val);
+                unset($context[$key]);
             }
         }
 
         return strtr($message, $replacements);
+    }
+
+    private function stringify($val): string {
+        if ($val === null || is_scalar($val) || (\is_object($val) && method_exists($val, '__toString'))) {
+            return (string)$val;
+        } elseif ($val instanceof DateTimeInterface) {
+            return $val->format(DateTimeInterface::RFC3339);
+        } elseif (\is_object($val)) {
+            if ($val instanceof \JsonSerializable) {
+                return json_encode($val);
+            } else {
+                return '{object ' . \get_class($val) . '}';
+            }
+        } elseif (\is_resource($val)) {
+            return '{resource}';
+        } else {
+            return json_encode($val);
+        }
     }
 
     private function logException(\Throwable $exception): void
