@@ -98,7 +98,7 @@ class JsonRpcLogger extends AbstractLogger
         $this->write($message);
 
         if (isset($exception)) {
-            $this->logException($context['exception']);
+            $this->logException($exception);
         }
     }
 
