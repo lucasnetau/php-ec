@@ -701,7 +701,7 @@ class Scheduler implements LoggerAwareInterface {
             $config = $this->actionConfig[$actionName];
             if ($config['cmd'] instanceof Closure) {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
-                $cmd->run($action->getVars())->then(function() use($actionName, $action, $cmd) {
+                $cmd($action->getVars())->then(function() use($actionName, $action, $cmd) {
                     /** Accounting? */
                 })->catch(function($exception) use($action, $actionName, $cmd) {
                     $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);

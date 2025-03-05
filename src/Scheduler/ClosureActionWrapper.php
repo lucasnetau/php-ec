@@ -22,15 +22,22 @@ class ClosureActionWrapper implements LoggerAwareInterface {
     /** PSR3 logger provides $this->logger */
     use LoggerAwareTrait;
 
-    public function __construct(private readonly Closure $closure, LoggerInterface $logger) {
+    private Closure $closure;
+
+    public function __construct(callable $callback, LoggerInterface $logger) {
         $this->setLogger($logger);
+
+        $callable = $callback(...);
+        $bound = @$callable->bindTo($this);
+        $this->closure = $bound ?? $callable;
     }
 
-    public function run(array $args): Promise
+    public function __invoke(array $args): Promise
     {
         $resolver = function (callable $resolve, callable $reject) use ($args) {
             try {
-                $resolve($this->closure->call($this, $args));
+                $closure = $this->closure;
+                $resolve($closure($args));
             } catch (\Throwable $e) {
                 $reject(new RuntimeException($e->getMessage(), $e->getCode(), $e));
             }
