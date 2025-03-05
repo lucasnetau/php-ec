@@ -11,6 +11,8 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
+use React\Promise\Promise;
+use RuntimeException;
 use Closure;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
@@ -20,12 +22,27 @@ class ClosureActionWrapper implements LoggerAwareInterface {
     /** PSR3 logger provides $this->logger */
     use LoggerAwareTrait;
 
-    public function __construct(private Closure $closure, LoggerInterface $logger) {
+    public function __construct(private readonly Closure $closure, LoggerInterface $logger) {
         $this->setLogger($logger);
     }
 
-    public function run(array $args): void
+    public function run(array $args): Promise
     {
-        $this->closure->call($this, $args);
+        $resolver = function (callable $resolve, callable $reject) use ($args) {
+            try {
+                $resolve($this->closure->call($this, $args));
+            } catch (\Throwable $e) {
+                $reject(new RuntimeException($e->getMessage(), $e->getCode(), $e));
+            }
+        };
+
+        $canceller = function () {
+            // Cancel/abort any running operations like network connections, streams etc.
+
+            // Reject promise by throwing an exception
+            throw new RuntimeException('Promise cancelled');
+        };
+
+        return new Promise($resolver, $canceller);
     }
 }

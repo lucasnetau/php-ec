@@ -692,6 +692,46 @@ class Scheduler implements LoggerAwareInterface {
         return $this->runningActions[$actionName];
     }
 
+    protected function handleAction(Action $action): void
+    {
+        //@TODO Implement queue to rate limit execution of actions
+        $actionName = $action->getCmd();
+        if (isset($this->actionConfig[$actionName]))
+        {
+            $config = $this->actionConfig[$actionName];
+            if ($config['cmd'] instanceof Closure) {
+                $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
+                $cmd->run($action->getVars())->then(function() use($actionName, $action, $cmd) {
+                    /** Accounting? */
+                })->catch(function($exception) use($action, $actionName, $cmd) {
+                    $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
+                    $error = [
+                        'error' => $exception->getMessage(),
+                        'action' => $action,
+                    ];
+                    $this->erroredActionCommands[] = $error;
+                });
+            } else {
+                $process = $this->start_action($actionName);
+                /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
+                do {
+                    $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
+                } while (array_key_exists($uniqid, $this->inflightActionCommands));
+                $rpc_request = new JsonRpcRequest(self::ACTION_RUN_METHOD, $action->getVars(), $uniqid);
+                $this->inflightActionCommands[$uniqid] = [
+                    'action' => $action,
+                    'pid' => $process->getPid(),
+                ];
+                $this->dirty = true;
+                $process->stdin->write(json_encode($rpc_request) . "\n");
+            }
+        }
+        else
+        {
+            $this->logger->error("Unable to start unknown action " . json_encode($action));
+        }
+    }
+
     /**
      * @param string $filename
      */
@@ -901,44 +941,7 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         /** Handle request to run an action */
-        $this->engine->on('action', function(Action $action) {
-            //@TODO Implement queue to rate limit execution of actions
-            $actionName = $action->getCmd();
-            if (isset($this->actionConfig[$actionName]))
-            {
-                $config = $this->actionConfig[$actionName];
-                if ($config['cmd'] instanceof Closure) {
-                    $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
-                    try {
-                        $cmd->run($action->getVars());
-                    } catch (Throwable $exception) {
-                        $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
-                        $error = [
-                            'error' => $exception->getMessage(),
-                            'action' => $action,
-                        ];
-                        $this->erroredActionCommands[] = $error;
-                    }
-                } else {
-                    $process = $this->start_action($actionName);
-                    /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
-                    do {
-                        $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
-                    } while (array_key_exists($uniqid, $this->inflightActionCommands));
-                    $rpc_request = new JsonRpcRequest(self::ACTION_RUN_METHOD, $action->getVars(), $uniqid);
-                    $this->inflightActionCommands[$uniqid] = [
-                        'action' => $action,
-                        'pid' => $process->getPid(),
-                    ];
-                    $this->dirty = true;
-                    $process->stdin->write(json_encode($rpc_request) . "\n");
-                }
-            }
-            else
-            {
-                $this->logger->error("Unable to start unknown action " . json_encode($action));
-            }
-        });
+        $this->engine->on('action', $this->handleAction(...));
 
         /** Handle request to run an on demand source */
         $this->engine->on('source', function(Scheduler\Messages\ExecuteSource $execute) {
