@@ -962,14 +962,15 @@ class Scheduler implements LoggerAwareInterface {
 
         /** If we have any errored actions then we replay them and attempt recovery. In normal state we initialise the input processes */
         if ($this->erroredActionCommands) {
+            //Take a copy of errored actions and reset the global state, function based actions will run straight away and may error again
+            $erroredActions = $this->erroredActionCommands;
+            $this->erroredActionCommands = [];
             $this->logger->notice('Beginning failed action recovery process');
             $this->state = new State(State::RECOVERY);
-            while(count($this->erroredActionCommands) > 0) {
-                $errored = array_shift($this->erroredActionCommands);
+            foreach($erroredActions as $errored) {
                 $action = new Action($errored['action']['cmd'], $errored['action']['vars']);
                 $this->engine->emit('action', [$action]);
             }
-            $this->erroredActionCommands = [];
         } else {
             $this->initialise_input_processes();
         }
