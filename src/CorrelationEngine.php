@@ -26,19 +26,19 @@ use Exception;
 use RuntimeException;
 
 use function abs;
+use function array_diff;
 use function array_key_exists;
 use function array_keys;
 use function array_merge;
 use function class_exists;
-use function error_log;
 use function fwrite;
 use function get_class;
 use function in_array;
 use function ini_restore;
 use function ini_set;
+use function is_array;
 use function round;
 use function spl_object_id;
-use function count;
 use function is_a;
 use function array_sum;
 use function array_slice;
@@ -99,6 +99,8 @@ class CorrelationEngine implements EventEmitterInterface {
         'source' => ExecuteSource::class,
     ];
 
+    protected array $matcherConstructor = [];
+
     /**
      * CorrelationEngine constructor.
      * @param class-string<IEventMatcher>[] $rules Class name of rules to load
@@ -107,6 +109,11 @@ class CorrelationEngine implements EventEmitterInterface {
     {
         foreach($rules as $matcher)
         {
+            //Rules may be defined with ['Rule::class',['constructor param']] or plain 'Rule::class'
+            if (is_array($matcher)) {
+                $this->matcherConstructor[$matcher[0]] = $matcher[1];
+                $matcher = $matcher[0];
+            }
             /** @var class-string<IEventMatcher> $eventname */
             foreach($matcher::initialAcceptedEvents() as $eventname)
             {
@@ -287,15 +294,13 @@ class CorrelationEngine implements EventEmitterInterface {
      */
     public function constructMatcher(string $className): IEventMatcher
     {
-        if (is_a($className, IEventMatcher::class, true))
-        {
+        if (is_a($className, IEventMatcher::class, true)) {
+            $constructorParams = $this->matcherConstructor[$className] ?? [];
             /** @var IEventMatcher $matcher */
-            $matcher = new $className();
+            $matcher = new $className(...$constructorParams);
             $this->attachListeners($matcher);
             return $matcher;
-        }
-        else
-        {
+        } else {
             throw new RuntimeException("$className does not implement " . IEventMatcher::class);
         }
     }
