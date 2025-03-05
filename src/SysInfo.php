@@ -15,6 +15,7 @@ use function array_filter;
 use function count;
 use function exec;
 use function explode;
+use function file_exists;
 use function file_get_contents;
 use function ini_get;
 use function min;
@@ -147,13 +148,18 @@ class SysInfo {
      * @return int
      */
     public function getCgroupMemoryLimit() : int {
+        if (PHP_OS_FAMILY === 'Darwin') {
+            return self::NO_LIMIT;
+        }
         $limit = PHP_INT_MAX;
         foreach(self::CGROUP_FILE_PATHS as $path) {
-            $cgroup_limit = @file_get_contents('/sys/fs/cgroup/memory/memory.limit_in_bytes');
-            if ($cgroup_limit === false) {
-                continue;
+            if (file_exists($path)) {
+                $cgroup_limit = @file_get_contents($path);
+                if ($cgroup_limit === false) {
+                    continue;
+                }
+                $limit = min($limit, (int)$cgroup_limit);
             }
-            $limit = min($limit, (int)$cgroup_limit);
         }
 
         return ($limit === PHP_INT_MAX) ? self::NO_LIMIT : $limit;
