@@ -27,8 +27,12 @@ class ClosureActionWrapper implements LoggerAwareInterface {
     public function __construct(callable $callback, LoggerInterface $logger) {
         $this->setLogger($logger);
 
+        if ($callback instanceof LoggerAwareInterface) {
+            $callback->setLogger($this->logger);
+        }
+
         $callable = $callback(...);
-        $bound = @$callable->bindTo($this);
+        $bound = @$callable->bindTo($this, $this); //Bind the closure if we can to this instance of ClosureActionWrapper giving access to the Logger
         $this->closure = $bound ?? $callable;
     }
 
