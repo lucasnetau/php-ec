@@ -550,7 +550,7 @@ class Scheduler implements LoggerAwareInterface {
      * @param bool|null $singleShot
      * @param array $env
      */
-    public function register_action(string $name, string|array|Closure $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = []) : void
+    public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = []) : void
     {
         $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot];
     }
@@ -695,10 +695,9 @@ class Scheduler implements LoggerAwareInterface {
     {
         //@TODO Implement queue to rate limit execution of actions
         $actionName = $action->getCmd();
-        if (isset($this->actionConfig[$actionName]))
-        {
+        if (isset($this->actionConfig[$actionName])) {
             $config = $this->actionConfig[$actionName];
-            if ($config['cmd'] instanceof Closure) {
+            if (is_callable($config['cmd'])) {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
                 $cmd($action->getVars())->then(function() use($actionName, $action, $cmd) {
                     /** Accounting? */
@@ -724,9 +723,7 @@ class Scheduler implements LoggerAwareInterface {
                 $this->dirty = true;
                 $process->stdin->write(json_encode($rpc_request) . "\n");
             }
-        }
-        else
-        {
+        } else {
             $this->logger->error("Unable to start unknown action " . json_encode($action));
         }
     }
