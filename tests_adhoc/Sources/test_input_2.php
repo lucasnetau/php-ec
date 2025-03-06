@@ -6,14 +6,17 @@ use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 
 include __DIR__ . "/../../vendor/autoload.php";
 
+posix_setpgid(0,0);
+
 $length = 60 * 1000000000; //60 seconds
 
 $start = hrtime(true);
 
 while ((hrtime(true) - $start) < $length) {
-    $event = new Event(['event' => 'Test:Event:1','datetime' => (new DateTimeImmutable())->format('c')]);
+    $event = new Event(['event' => 'Test:Event:2','datetime' => (new DateTimeImmutable())->format('c')]);
     $rpc = new JsonRpcNotification(Scheduler::INPUT_ACTION_HANDLE, ['event' => $event]);
+    fwrite(STDOUT, json_encode($rpc) . "\n");
     fwrite(STDOUT, json_encode($rpc) . "\n");
 }
 
-fwrite(STDERR, "Finished Input 1\n");
+fwrite(STDERR, "Finished Input 2\n");

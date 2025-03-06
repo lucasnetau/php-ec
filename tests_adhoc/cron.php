@@ -15,7 +15,7 @@ class RapidCron extends Rule\Cron {
 
     public function onSchedule(): void
     {
-        error_log('Cron schedule reached');
+        error_log('MINUTE CRON: Minute Cron schedule reached');
     }
 }
 
@@ -28,7 +28,7 @@ class DailyCron extends Rule\Cron {
 
     public function onSchedule(): void
     {
-        error_log('Cron schedule reached');
+        error_log('DAILY CRON: Daily Cron schedule reached');
     }
 };
 
@@ -37,7 +37,7 @@ class InitCron extends Rule\Cron {
 
     public function onSchedule(): void
     {
-        error_log('System has initialised');
+        error_log('INIT CRON: System has initialised');
     }
 }
 
@@ -46,25 +46,26 @@ class ShutdownCron extends Rule\Cron {
 
     public function onSchedule(): void
     {
-        error_log('System shutting down');
+        error_log('SHUTDOWN CRON: System shutting down');
     }
 }
 
 /** @var Cron[] $rules */
 $rules = [
-    'init' => new InitCron(),
-    'rapid' => new RapidCron(),
+   // 'init' => new InitCron(),
+  //  'rapid' => new RapidCron(),
     'daily' => new DailyCron(),
-    'shutdown' => new ShutdownCron(),
+   // 'shutdown' => new ShutdownCron(),
 ];
 
 $events = [
-    new Event(['event' => \EdgeTelemetrics\EventCorrelation\Scheduler::CONTROL_MSG_NEW_STATE]),
-    new Event(['event' => 'TestEvent']),
-    new Event(['event' => \EdgeTelemetrics\EventCorrelation\Scheduler::CONTROL_MSG_STOP]),
+    'Initialised Event' => new Event(['event' => \EdgeTelemetrics\EventCorrelation\Scheduler::CONTROL_MSG_NEW_STATE]),
+    'Regular Event' => new Event(['event' => 'TestEvent']),
+    'Stop Event' => new Event(['event' => \EdgeTelemetrics\EventCorrelation\Scheduler::CONTROL_MSG_STOP]),
 ];
 
-foreach($events as $event) {
+foreach($events as $msg => $event) {
+    error_log("******* Sending $msg *******");
     foreach ($rules as $ruleIndex => $rule) {
         $handled = $rule->handle($event);
         if (($handled & $rule::EVENT_HANDLED) !== $rule::EVENT_HANDLED) {
@@ -78,7 +79,7 @@ foreach($events as $event) {
             if ($rule->getTimeout() !== null) {
                 $rule->alarm();
             }
-            echo json_encode($rule) . PHP_EOL;
+            echo get_class($rule) . ": " . json_encode( $rule) . PHP_EOL;
         }
     }
 }

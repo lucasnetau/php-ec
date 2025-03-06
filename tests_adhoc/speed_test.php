@@ -6,7 +6,10 @@ use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchAnyRule;
 use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRule;
 use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRuleContinuously;
 
-include __DIR__ . "/../vendor/autoload.php";
+require_once __DIR__ . "/../bin/composer.php";
+require_once __DIR__ . "/Rules/MatchAnyRule.php";
+require_once __DIR__ . "/Rules/MatchOneRule.php";
+require_once __DIR__ . "/Rules/MatchOneRuleContinuously.php";
 
 $engine = new CorrelationEngine([
     MatchAnyRule::class,
@@ -14,7 +17,8 @@ $engine = new CorrelationEngine([
     MatchOneRuleContinuously::class,
 ]);
 
-$length = 60 * 1000000000; //60 seconds
+const SECONDS = 20;
+$length = SECONDS * 1000000000; //60 seconds
 
 $start = hrtime(true);
 
@@ -24,4 +28,4 @@ while ((hrtime(true) - $start) < $length) {
 
 $state = $engine->getState();
 
-echo 'Processed ' . $state['statistics']['seen']['Test:Event:1'] . ' events  in 60 seconds' . PHP_EOL;
+echo 'Processed ' . ($state['statistics']['seen']['Test:Event:1']/SECONDS) . ' events / second' . PHP_EOL;

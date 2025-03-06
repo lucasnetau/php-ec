@@ -7,4 +7,5 @@ use EdgeTelemetrics\EventCorrelation\Rule;
 class MatchOneRule extends Rule\MatchSingle {
 
     const EVENTS = [['Test:Event:Single']];
+
 }

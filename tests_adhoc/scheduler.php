@@ -1,11 +1,13 @@
 <?php declare(strict_types=1);
 
 use Bref\Logger\StderrLogger;
+use EdgeTelemetrics\EventCorrelation\Action;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
-use EdgeTelemetrics\EventCorrelation\tests\Rules\LogEverything;
+use EdgeTelemetrics\EventCorrelation\tests\Rules\LogControlMessages;
 use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchAnyRule;
 use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRule;
 use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRuleContinuously;
+use EdgeTelemetrics\EventCorrelation\Rule;
 
 use Psr\Log\LogLevel;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
@@ -16,11 +18,23 @@ ini_set('display_errors', "on");
 
 include __DIR__ . "/../vendor/autoload.php";
 
+class PassToFail extends Rule\MatchSingle {
+
+    const EVENTS = [[Scheduler::CONTROL_MSG_NEW_STATE,Scheduler::CONTROL_MSG_RESTORED_STATE]];
+
+    public function onComplete() : void
+    {
+        $action = new Action("fail", $this->getFirstEvent());
+        $this->emit('data', [$action]);
+    }
+}
+
 $rules = [
     MatchAnyRule::class,
     MatchOneRule::class,
     MatchOneRuleContinuously::class,
-    //LogEverything::class,
+    LogControlMessages::class,
+    //PassToFail::class,
 ];
 
 $scheduler = new class($rules) extends Scheduler {
@@ -36,7 +50,7 @@ $scheduler = new class($rules) extends Scheduler {
 
         $this->register_input_process('test_data_stream_1', wrap_source_php_cmd(__DIR__ . "/Sources/test_input_1.php"));
         $this->register_input_process('test_data_stream_2', php_cmd(__DIR__ . "/Sources/test_input_2.php"));
-        $this->register_input_process('test_misconfigured_input', php_cmd(__DIR__ . "/Sources/noexist.php"));
+        $this->register_input_process('test_misconfigured_input', php_cmd(__DIR__ . "/Sources/noexist.php"), null, [], false);
 
         if (file_exists('/tmp/php_ec-scheduler_test_logs.txt')) {
             unlink('/tmp/php_ec-scheduler_test_logs.txt');
@@ -44,10 +58,12 @@ $scheduler = new class($rules) extends Scheduler {
         $this->register_action('log', php_cmd(__DIR__ . "/Actions/log.php"), null, false, [
             'LOG_FILENAME' => '/tmp/php_ec-scheduler_test_logs.txt',
         ]);
+        $this->register_action('fail', php_cmd(__DIR__ . "/Actions/willFail.php"), null, false, []);
 
         $this->setSavefileName("/tmp/php_ec-scheduler_test.state");
         $this->setSaveStateInterval(1);
         $this->enableManagementServer(true);
+        $this->setHeartbeatInterval(10);
     }
 
     function handle_exception($exception) {

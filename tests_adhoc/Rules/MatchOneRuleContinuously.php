@@ -8,6 +8,8 @@ class MatchOneRuleContinuously extends Rule\MatchSingleContinuously {
 
     const EVENTS = [['Test:Event:1']];
 
+    use Rule\Traits\NeverTimesOutTrait;
+
     public function onProgress(): void
     {
         $this->trimEventChain(10);

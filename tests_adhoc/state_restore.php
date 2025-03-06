@@ -2,10 +2,6 @@
 
 use Bref\Logger\StderrLogger;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
-use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchAnyRule;
-use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRule;
-use EdgeTelemetrics\EventCorrelation\tests\Rules\MatchOneRuleContinuously;
-
 use Psr\Log\LogLevel;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
 
@@ -14,11 +10,7 @@ ini_set('display_errors', "on");
 
 include __DIR__ . "/../vendor/autoload.php";
 
-$rules = [
-    MatchAnyRule::class,
-    MatchOneRule::class,
-    MatchOneRuleContinuously::class,
-];
+$rules = []; //Can be empty since we are not creating any rule instances
 
 define('SAVE_FILE', tempnam(sys_get_temp_dir(), 'php-ec-test'));
 
