@@ -562,7 +562,7 @@ class Scheduler implements LoggerAwareInterface {
     public function start_action(string $actionName): Process
     {
         $actionConfig = $this->actionConfig[$actionName];
-        /** @TODO: Handle singleShot processes true === $actionConfig['singleShot'] ||  */
+        /** @TODO: Handle singleShot processes true === $actionConfig['singleShot'] treat as not running for accounting */
         if (!isset($this->runningActions[$actionName])) {
             /** If there is no running action then we initialise the process **/
             if (is_string($actionConfig['cmd'])) {
@@ -667,8 +667,7 @@ class Scheduler implements LoggerAwareInterface {
                     }
                 }
                 unset($this->runningActions[$actionName]);
-                if (count($this->runningActions) === 0)
-                {
+                if (count($this->runningActions) === 0) {
                     /**
                      * The runningActions queue array can grow large, using a lot of memory,
                      * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
@@ -676,7 +675,7 @@ class Scheduler implements LoggerAwareInterface {
                     $this->runningActions = [];
 
                     if ($this->state->isStopping() && count($this->input_processes) === 0) {
-                        /** If we are shutting down and all input processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
+                        /** If we are shutting down and all input and action processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
                         $this->exit();
                     }
                 }
@@ -910,6 +909,9 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->info("Garbage collection enabled at runtime");
         }
 
+        if ($this->logger instanceof NullLogger) {
+            error_log('Warning: Logger is set to NullLogger, not further logs will be seen');
+        }
         $this->logger->debug("Using event loop implementation: {class}", ['class' => get_class($this->loop)]);
 
         /** Initialise the management server early in the startup */
@@ -1053,18 +1055,19 @@ class Scheduler implements LoggerAwareInterface {
             //Set up a timer to forcefully move the scheduler into the next shutdown phase if the input's have not shutdown in time
             $this->shutdownTimer = $this->loop->addTimer(10.0, function() {
                 $this->logger->warning( "Input processes did not shutdown within the timeout delay...");
-                $this->stop();
+                $this->shutdown_phase2();
             });
         } else {
-            $this->stop();
+            $this->shutdown_phase2();
         }
     }
 
     /**
      * Input processes are stopped. Shutdown any running actions (some may need to be flushed)
      */
-    public function stop() : void
+    protected function shutdown_phase2() : void
     {
+        $this->state = new State(State::STOPPING);
         if (null !== $this->shutdownTimer) {
             $this->loop->cancelTimer($this->shutdownTimer);
             $this->shutdownTimer = null;
@@ -1093,7 +1096,7 @@ class Scheduler implements LoggerAwareInterface {
 
                 //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
                 $this->shutdownTimer = $this->loop->addTimer(10.0, function () {
-                    $this->logger->warning("Action processes did not shutdown within the timeout delay...");
+                    $this->logger->warning("Action processes did not shutdown within the timeout delay...", ['actions' => array_keys($this->runningActions)]);
                     $this->exit();
                 });
             });
