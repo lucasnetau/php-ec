@@ -518,8 +518,7 @@ class Scheduler implements LoggerAwareInterface {
         });
     }
 
-    public function handleEvent(Event $event): void
-    {
+    protected function handleEvent(Event $event): void {
         try {
             $this->engine->handle($event);
             /**
