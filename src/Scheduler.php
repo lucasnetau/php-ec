@@ -314,7 +314,7 @@ class Scheduler implements LoggerAwareInterface {
                     $this->initialise_input_process($id);
                 } catch (RuntimeException $ex) {
                     $this->logger->emergency("An input process failed to start during initialisation.", ['exception' => $ex]);
-                    exit(1);
+                    $this->panic($ex);
                 }
             }
         }
@@ -529,7 +529,7 @@ class Scheduler implements LoggerAwareInterface {
             }
         } catch (Throwable $ex) {
             $this->logger->emergency("Rules must not throw exceptions", ['exception' => $ex]);
-            exit(-1);
+            $this->panic($ex);
         }
     }
 
@@ -862,7 +862,7 @@ class Scheduler implements LoggerAwareInterface {
             $savedState = $this->saveStateHandler->loadState();
         } catch (RuntimeException $ex) {
             $this->logger->critical($ex->getMessage());
-            exit(1);
+            $this->panic($ex);
         }
         $restoring = $savedState !== false;
 
@@ -872,7 +872,7 @@ class Scheduler implements LoggerAwareInterface {
                 $this->engine->setState($savedState['engine']);
             } catch (Exception $ex) {
                 $this->logger->emergency("A fatal exception was thrown while loading previous saved state.", ['exception' => $ex]);
-                exit(-1);
+                $this->panic($ex);
             }
             $this->logger->debug("Successfully loaded from saved state");
         }
@@ -1127,6 +1127,15 @@ class Scheduler implements LoggerAwareInterface {
                 unset($this->saveStateHandler);
             }
         });
+    }
+
+    /** Call if we fail in a non-handled way
+     * @throws Throwable
+     */
+    protected function panic(Throwable $t) : void {
+        error_log("*** PANIC ***");
+        Loop::stop();
+        throw $t;
     }
 
     /**
