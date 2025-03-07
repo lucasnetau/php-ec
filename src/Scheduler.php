@@ -545,7 +545,7 @@ class Scheduler implements LoggerAwareInterface {
 
     /**
      * @param string $name
-     * @param string|array|Closure $cmd
+     * @param string|array|callable $cmd
      * @param string|null $wd
      * @param bool|null $singleShot
      * @param array $env
