@@ -12,6 +12,7 @@
 namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
 use DateInterval;
+use DateMalformedIntervalStringException;
 use DateTimeImmutable;
 use DateTimeInterface;
 use EdgeTelemetrics\EventCorrelation\Event;
@@ -353,7 +354,12 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
         {
             $lastSeen = $this->lastSeenEventDateTime();
             if (null !== $lastSeen) {
-                $this->timeout = $lastSeen->add(new DateInterval(static::TIMEOUT));
+                try {
+                    $timeout = new DateInterval(static::TIMEOUT);
+                } catch (DateMalformedIntervalStringException $ex) {
+                    trigger_error("TIMEOUT in " . $this::class . " cannot be parsed: " . $ex->getMessage(), E_USER_WARNING);
+                }
+                $this->timeout = $lastSeen->add($timeout ?? new DateInterval(static::NO_TIMEOUT_STRING));
             }
         }
     }
