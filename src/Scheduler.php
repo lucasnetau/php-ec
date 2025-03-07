@@ -1153,8 +1153,8 @@ class Scheduler implements LoggerAwareInterface {
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
-        $state['saveFileSizeBytes'] = $this->saveStateHandler->lastSaveSizeBytes();
-        $state['saveStateLastDuration'] = $this->saveStateHandler->lastSaveWriteDuration();
+        $state['saveFileSizeBytes'] = $this->saveStateHandler?->lastSaveSizeBytes();
+        $state['saveStateLastDuration'] = $this->saveStateHandler?->lastSaveWriteDuration();
         //@TODO add a clean shutdown flag here in save state
         return $state;
     }
