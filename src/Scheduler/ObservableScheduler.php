@@ -22,6 +22,17 @@ class ObservableScheduler extends Scheduler {
 
     protected Closure $actionHandlingCallback;
 
+    public function __construct(array $rules, bool $live = false) {
+        parent::__construct($rules);
+        if ($live) {
+            $this->engine->setEventStreamLive();
+        }
+    }
+
+    public function setRealtime(): void{
+        $this->engine->setEventStreamLive();
+    }
+
     public function queueEvent(Event $event): void {
         $this->loop->futureTick(function () use ($event) {
             $this->handleEvent($event);
@@ -41,6 +52,16 @@ class ObservableScheduler extends Scheduler {
     public function setHandleActionCallback(null|callable $callback): void {
         $this->eventHandlingCallback = $callback === null ? null : $callback(...);
     }
+
+    public function getExecutionState() : State {
+        return $this->state;
+    }
+
+    public function getErroredActions() : array {
+        return $this->erroredActionCommands;
+    }
+
+    /** Overridden Functions */
 
     protected function handleEvent(Event $event): void {
         if (isset($this->eventHandlingCallback)) {
