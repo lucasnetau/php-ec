@@ -17,6 +17,7 @@ use EdgeTelemetrics\EventCorrelation\Management\Server;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ClosureActionWrapper;
+use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
@@ -978,18 +979,13 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Initialise Heartbeat timer */
         if ($this->heartbeat_seconds > 0) {
-            $cb = function() {
-                $this->handleEvent(new Event(['event' => static::CONTROL_MSG_HEARTBEAT]));
-            };
-            if ($this->heartbeat_initialDelay === 0) {
-                //No delay, schedule straight away
-                $this->scheduledTasks['heartbeat'] = $this->loop->addPeriodicTimer($this->heartbeat_seconds, $cb);
-            } else {
-                //Delay in starting heartbeats, use a timer to set the future periodic timer
-                $this->loop->addTimer($this->heartbeat_initialDelay, function() use ($cb) {
-                    $this->scheduledTasks['heartbeat'] = $this->loop->addPeriodicTimer($this->heartbeat_seconds, $cb);
-                });
-            }
+            $heartbeat = new Heartbeat($this->heartbeat_seconds);
+
+            $heartbeat->on('pulse', function($runtime, $seq) {
+                $this->handleEvent(new Event(['event' => static::CONTROL_MSG_HEARTBEAT, 'runtime' => $runtime, 'seq' => $seq]));
+            });
+
+            $heartbeat->start($this->loop, $this->heartbeat_initialDelay);
         }
 
         /** Monitor memory usage */
