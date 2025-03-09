@@ -177,7 +177,7 @@ abstract class Cron extends Rule
             if (static::$eventstream_live) {
                 $currentTime = 'now';
             } else {
-                $times = array_filter([$this->getLastEvent()?->datetime, $this->initEvent, $this->cronLastRun]);
+                $times = array_filter([$this->getLastEvent()?->datetime, $this->initEvent->datetime, $this->cronLastRun]);
                 /** @var DateTimeImmutable $currentTime */
                 $currentTime = max($times);
             }
