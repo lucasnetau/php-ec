@@ -51,6 +51,8 @@ class ActionHelper extends EventEmitter {
 
     protected LoggerInterface $logger;
 
+    protected int $exitCode = 0;
+
     const INPUT_BUFFER_SIZE = 65536;
 
     public function __construct(array $options = []) {
@@ -90,6 +92,7 @@ class ActionHelper extends EventEmitter {
                     $this->emit(self::ACTION_EXECUTE, [$rpc]);
                 } catch (\Throwable $t) {
                     $this->logger->log(LogLevel::CRITICAL, 'Terminating action process on unhandled exception', ['exception' => $t]);
+                    $this->exitCode = 1;
                     $this->stop();
                 }
             } else {
@@ -111,6 +114,7 @@ class ActionHelper extends EventEmitter {
             //Don't try to do anything else, our output has closed, we are either shutting down or we cannot communicate with scheduler
             $this->loop->removeSignal(SIGINT, $this->signalHandler);
             $this->loop->removeSignal(SIGTERM, $this->signalHandler);
+            unset($this->logger);
             $this->loop->stop();
         });
 
@@ -155,8 +159,11 @@ class ActionHelper extends EventEmitter {
     /**
      * Helper method to start the Event loop
      */
-    public function run() : void {
+    public function run(bool $exitOnStop = false) : void {
         $this->loop->run();
+        if ($exitOnStop) {
+            exit($this->exitCode);
+        }
     }
 
     /**
@@ -165,11 +172,10 @@ class ActionHelper extends EventEmitter {
      */
     public function stop() : void {
         if ($this->input->isReadable()) {
-            $this->loop->addTimer(1.0, function () {
+            $this->loop->addTimer(0.1, function () {
                 $this->input->close();
             });
         } else if ($this->output->isWritable()) {
-            unset($this->logger);
             $this->output->end();
         }
     }
