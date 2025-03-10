@@ -22,6 +22,8 @@ class Heartbeat implements EventEmitterInterface {
     private float $start;
     private int $seq;
 
+    const CONVERSION_FACTOR = 1e+3; //Convert Nano to Microseconds
+
     public function __construct(protected float|int $heartbeatIntervalSeconds) {}
 
     public function start(LoopInterface|null $loop = null, $delay = 0): void
@@ -43,7 +45,7 @@ class Heartbeat implements EventEmitterInterface {
     protected function pulse(): void
     {
         $this->emit('pulse', [
-            'runtime' => (hrtime(true)-$this->start),
+            'runtime' => (int)round((hrtime(true)-$this->start)/self::CONVERSION_FACTOR),
             'seq' => $this->seq++,
         ]);
     }
