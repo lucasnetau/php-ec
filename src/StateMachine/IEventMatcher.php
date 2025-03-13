@@ -13,6 +13,7 @@ namespace EdgeTelemetrics\EventCorrelation\StateMachine;
 
 use DateTimeInterface;
 use EdgeTelemetrics\EventCorrelation\Event;
+use EdgeTelemetrics\EventCorrelation\IEvent;
 use JsonSerializable;
 use Serializable;
 
@@ -33,10 +34,16 @@ Interface IEventMatcher extends JsonSerializable, Serializable {
     const EVENTSOURCE_TIMESTAMP_SOURCE = 1; // Use the event timestamps in the event
     const EVENTSOURCE_TIMESTAMP_SERVER = 2; // Ignore the event timestamps in the event and instead use the server time when received
 
+    /**
+     * @return string[]
+     */
     public static function initialAcceptedEvents() : array;
 
     public function handle(Event $event) : int;
 
+    /**
+     * @return string[]
+     */
     public function nextAcceptedEvents() : array;
 
     public function complete() : bool;
@@ -49,6 +56,7 @@ Interface IEventMatcher extends JsonSerializable, Serializable {
 
     public function lastSeenEventDateTime(): ?DateTimeInterface;
 
+    /** @return IEvent[] */
     public function getEventChain(): array;
 
     public function getTimeout(): ?DateTimeInterface;
