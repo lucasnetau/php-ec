@@ -23,26 +23,26 @@ use Evenement\EventEmitterTrait;
 use DateTimeImmutable;
 use DateTimeInterface;
 use Exception;
+use ReflectionClass;
 use RuntimeException;
 
 use function abs;
-use function array_diff;
 use function array_key_exists;
 use function array_keys;
 use function array_merge;
 use function class_exists;
 use function fwrite;
-use function get_class;
 use function in_array;
 use function ini_restore;
 use function ini_set;
 use function is_array;
+use function is_object;
+use function is_string;
 use function round;
 use function spl_object_id;
 use function is_a;
 use function array_sum;
 use function array_slice;
-use function serialize;
 use function uasort;
 use function unserialize;
 use function implode;
@@ -103,16 +103,23 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * CorrelationEngine constructor.
-     * @param class-string<IEventMatcher>[] $rules Class name of rules to load
+     * @param class-string<IEventMatcher>[]|array[]|IEventMatcher[] $rules Class name of rules to load
+     * @throws RuntimeException
      */
     public function __construct(array $rules)
     {
         foreach($rules as $matcher)
         {
-            //Rules may be defined with ['Rule::class',['constructor param']] or plain 'Rule::class'
+            //Rules may be defined with ['Rule::class',['constructor param']], 'Rule::class' classname, or an initialised Rule
             if (is_array($matcher)) {
+                if (isset($this->matcherConstructor[$matcher[0]])) {
+                    throw new RuntimeException('Cannot have two Rules of same class defined as constructor array');
+                }
                 $this->matcherConstructor[$matcher[0]] = $matcher[1];
                 $matcher = $matcher[0];
+            }
+            if (is_string($matcher) && !class_exists($matcher)) {
+                throw new RuntimeException('Invalid Rule class name: ' . $matcher);
             }
             /** @var class-string<IEventMatcher> $eventname */
             foreach($matcher::initialAcceptedEvents() as $eventname)
@@ -182,14 +189,14 @@ class CorrelationEngine implements EventEmitterInterface {
             $result = $matcher->handle($event);
             if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
                 $handledMatchers[spl_object_id($matcher)] = $matcher;
-                $skipMatchers[] = get_class($matcher);
+                $skipMatchers[] = $matcher::class;
                 /** Update which events we are expecting next **/
                 $this->clearWatchForEvents($matcher);
                 if (!$matcher->complete()) {
                     $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
                 }
                 /** Record that we handled an event of this type */
-                $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
+                $this->incrStat('handled', (string)$event->event . "|" . $matcher::class);
             }
 
             // If we are timed out then flag the matcher for timeout processing.
@@ -212,20 +219,24 @@ class CorrelationEngine implements EventEmitterInterface {
          * or if a state machine of the same class handled the event
          */
         if (false === $suppress) {
-            $awaitingMatchers = array_diff(
-                array_merge(($this->initialEventLookup[$event->event] ?? []),
-                    ($this->initialEventLookup[IEventMatcher::EVENT_MATCH_ANY] ?? [])),
-                $skipMatchers /** If this className has already handled this event, don't create another **/
-            );
+            $awaitingMatchers = $this->initialEventLookup[$event->event] ?? [];
+            foreach($this->initialEventLookup[IEventMatcher::EVENT_MATCH_ANY] ?? [] as $initial) {
+                if (!in_array($initial, $awaitingMatchers, true)) {
+                    $awaitingMatchers[] = $initial;
+                }
+            }
 
             foreach ($awaitingMatchers as $class) {
+                if (in_array((is_object($class) ? $class::class : $class), $skipMatchers, true)){
+                    continue; /** If this className has already handled this event, don't create another **/
+                }
                 $matcher = $this->constructMatcher($class);
                 $result = $matcher->handle($event);
                 if ($this->isFlagSet($result, $matcher::EVENT_HANDLED)) {
                     $handledMatchers[spl_object_id($matcher)] = $matcher;
                     $this->eventProcessors[spl_object_id($matcher)] = $matcher;
-                    $this->incrStat('init_matcher', $class);
-                    $this->incrStat('handled', (string)$event->event . "|" . get_class($matcher));
+                    $this->incrStat('init_matcher', $matcher::class);
+                    $this->incrStat('handled', (string)$event->event . "|" . $matcher::class);
 
                     if (!$matcher->complete()) {
                         $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
@@ -256,7 +267,7 @@ class CorrelationEngine implements EventEmitterInterface {
             $this->removeTimeout($matcher);
             $matcher->fire();
             /** Record stat of matcher timeout */
-            $this->incrStat('completed_matcher_timeout', get_class($matcher));
+            $this->incrStat('completed_matcher_timeout', $matcher::class);
             $this->removeMatcher($matcher);
             unset($handledMatchers[$objectId]);
             unset($matcher);
@@ -270,7 +281,7 @@ class CorrelationEngine implements EventEmitterInterface {
 
             if ($matcher->complete()) {
                 /** Record stat of matcher completing */
-                $this->incrStat('completed_matcher', get_class($matcher));
+                $this->incrStat('completed_matcher', $matcher::class);
                 $this->removeMatcher($matcher);
                 unset($matcher);
             }
@@ -288,16 +299,20 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * Construct a new matcher EventProcessor and attach handlers for any events
-     * @param string $className
+     * @param string|IEventMatcher $className
      * @return IEventMatcher
      * @throws RuntimeException;
      */
-    public function constructMatcher(string $className): IEventMatcher
+    public function constructMatcher(string|IEventMatcher $className): IEventMatcher
     {
         if (is_a($className, IEventMatcher::class, true)) {
-            $constructorParams = $this->matcherConstructor[$className] ?? [];
-            /** @var IEventMatcher $matcher */
-            $matcher = new $className(...$constructorParams);
+            if (is_object($className)) {
+                $matcher = clone $className;
+            } else {
+                $constructorParams = $this->matcherConstructor[$className] ?? [];
+                /** @var IEventMatcher $matcher */
+                $matcher = new $className(...$constructorParams);
+            }
             $this->attachListeners($matcher);
             return $matcher;
         } else {
@@ -339,7 +354,7 @@ class CorrelationEngine implements EventEmitterInterface {
             }
         }
 
-        throw new RuntimeException("Expected rules to emit an IEvent or Action. Unable to handle object of class " . get_class($data));
+        throw new RuntimeException("Expected rules to emit an IEvent or Action. Unable to handle object of class " . $data::class);
     }
 
     /**
@@ -511,7 +526,7 @@ class CorrelationEngine implements EventEmitterInterface {
                     /** Remove all references if the matcher is timed out */
                     $this->removeTimeout($matcher);
                     /** Record stat of matcher timeout */
-                    $this->incrStat('matcher_timeout', get_class($matcher));
+                    $this->incrStat('matcher_timeout', $matcher::class);
                     $this->removeMatcher($matcher);
                     unset($matcher);
                 } else {
@@ -547,6 +562,10 @@ class CorrelationEngine implements EventEmitterInterface {
         {
             if ($matcher->complete()) {
                 continue; //Don't save the matcher if it is complete
+            }
+            $class = new ReflectionClass($matcher);
+            if ($class->isAnonymous()) {
+                continue; //We cannot save on-shot Anonymous classes
             }
 
             foreach($matcher->getEventChain() as $event)
