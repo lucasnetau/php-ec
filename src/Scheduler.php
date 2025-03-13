@@ -1019,6 +1019,9 @@ class Scheduler implements LoggerAwareInterface {
 
         /** GO! */
         $this->loop->run();
+        if ($this->state->state() === State::RUNNING) {
+            $this->state = new  State(State::STOPPED_UNCLEAN);
+        }
     }
 
     /**
@@ -1129,7 +1132,6 @@ class Scheduler implements LoggerAwareInterface {
      * @throws Throwable
      */
     protected function panic(Throwable $t) : void {
-        error_log("*** PANIC ***");
         Loop::stop();
         throw $t;
     }
