@@ -32,10 +32,13 @@
     "react/http": "^1.5.0",
     "nikic/php-parser" : "^4.12",
     "phpstan/phpstan" : "*",
+    "phpunit/phpunit": "^9.6",
     "enlightn/security-checker": "^1.9",
     "bref/logger": "*",
     "vimeo/psalm": "^4.10",
-    "dragonmantank/cron-expression": "*"
+    "dragonmantank/cron-expression": "*",
+    "vstelmakh/psr-test-logger": "^1.0",
+    "nette/php-generator": "v4.1.7"
   },
   "autoload": {
     "psr-4": {
@@ -47,7 +50,7 @@
   },
   "autoload-dev": {
     "psr-4": {
-      "EdgeTelemetrics\\EventCorrelation\\tests\\": "tests/"
+      "EdgeTelemetrics\\EventCorrelation\\Tests\\": "tests/"
     }
   }
 }
