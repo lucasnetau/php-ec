@@ -558,8 +558,7 @@ class CorrelationEngine implements EventEmitterInterface {
         $state['statistics'] = $this->statistics;
         $state['load'] = $this->calcLoad();
         /** @var IEventMatcher $matcher */
-        foreach($this->eventProcessors as $matcher)
-        {
+        foreach($this->eventProcessors as $matcher) {
             if ($matcher->complete()) {
                 continue; //Don't save the matcher if it is complete
             }
@@ -568,23 +567,22 @@ class CorrelationEngine implements EventEmitterInterface {
                 continue; //We cannot save on-shot Anonymous classes
             }
 
-            foreach($matcher->getEventChain() as $event)
-            {
+            foreach($matcher->getEventChain() as $event) {
                 $event_hash = spl_object_id($event);
-                if (isset($state['events'][$event_hash]))
-                {
+                if (isset($state['events'][$event_hash])) {
                     continue;
                 }
-                $state['events'][$event_hash] = serialize($event);
+                $state['events'][$event_hash] = $event->__serialize(); //Return the array not the serialised string
             }
 
-            $state['matchers'][] = serialize($matcher);
+            $state['matchers'][] = ["c" => $matcher::class, "s" => ($matcher->__serialize())];
         }
         return $state;
     }
 
     /**
      * @param array $state
+     * @throws \ReflectionException
      */
     public function setState(array $state) : void
     {
@@ -593,12 +591,23 @@ class CorrelationEngine implements EventEmitterInterface {
         foreach($state['events'] as $hash => $eventData)
         {
             /**
-             * First we unserialize all the events. We construct a table using the saved object hashes instead of the new ones
-             * to allow the saved state machines to identify their events.
+             * First we recreate all the events. We construct a table using the saved object hashes instead of the new ones to allow the saved state machines to identify their events.
              */
-            $event = @unserialize($eventData, ['allowed_classes' => [Event::class]]);
-            if (!($event instanceof IEvent)) {
-                fwrite(STDERR,'FATAL: Unserialisation of Event did not return an instance of IEvent' . PHP_EOL);
+            if (is_string($eventData)) {
+                //Old Format
+                $event = @unserialize($eventData, ['allowed_classes' => [Event::class]]);
+                if (!($event instanceof IEvent)) {
+                    fwrite(STDERR,'FATAL: Un-serialisation of Event did not return an instance of IEvent' . PHP_EOL);
+                    exit();
+                }
+            } elseif (is_array($eventData)) {
+                //New Format
+                $class = new ReflectionClass(Event::class);
+                $event = $class->newInstanceWithoutConstructor();
+
+                $event->__unserialize($eventData);
+            } else {
+                fwrite(STDERR,'FATAL: Unexpected saved state of Event found. Exit' . PHP_EOL);
                 exit();
             }
             $events[$hash] = $event;
@@ -615,15 +624,38 @@ class CorrelationEngine implements EventEmitterInterface {
         {
             /**
              * Reconstruct each state machine.
-             * 1. Unserialise to an object
+             * 1. Restore to an object
              * 2. Pass in all events to the state machine for it to resolve it's recorded events
              * 3. Attach listeners to the state machine for events
              * 4. Add state machine to our records
              * 5. Let the engine know what events to forward to the state machine.
              */
-            $matcher = @unserialize($matcherState);
-            if (!($matcher instanceof AEventProcessor)) {
-                fwrite(STDERR,'FATAL: Unserialisation of Matcher did not return an instance of AEventProcessor' . PHP_EOL);
+            if (is_string($matcherState)) {
+                //Old Format
+                $matcher = @unserialize($matcherState);
+                if (!($matcher instanceof AEventProcessor)) {
+                    fwrite(STDERR, 'FATAL: Un-serialisation of Matcher did not return an instance of AEventProcessor' . PHP_EOL);
+                    exit(1);
+                }
+            } elseif(is_array($matcherState)) {
+                //New Format ["c" => CLASSNAME, "s" => [<save state>]
+                $className = $matcherState['c'];
+                if (!class_exists($className)) {
+                    \EdgeTelemetrics\EventCorrelation\handleMissingClass($className);
+                }
+                if (!is_a($className, AEventProcessor::class, true)) {
+                    fwrite(STDERR, 'FATAL: Matcher class is not an instance of AEventProcessor' . PHP_EOL);
+                    exit(1);
+                }
+                $class = new ReflectionClass($className);
+                $matcher = $class->newInstanceWithoutConstructor();
+
+                $matcher->__unserialize($matcherState['s']);
+
+                //Filter the events to be given to the event matcher to the list in the save state.
+                $expectedEvents = array_intersect_key($events, array_flip($matcherState['s']['events']));
+            } else {
+                fwrite(STDERR, 'FATAL: Invalid saved state of Matcher' . PHP_EOL);
                 exit(1);
             }
             if ($matcher instanceof UndefinedRule /** && error_on_undefined=false */) {
@@ -631,10 +663,10 @@ class CorrelationEngine implements EventEmitterInterface {
                 /** @TODO Log the matcherState to a file if we need to fixup and restore */
                 continue;
             }
-            $matcher->resolveEvents($events);
+            $matcher->resolveEvents($expectedEvents ?? $events);
             $this->attachListeners($matcher);
             $this->eventProcessors[spl_object_id($matcher)] = $matcher;
-            $this->addTimeout($matcher); //No need to call updateTimeout() first, it is done by the unserialisation
+            $this->addTimeout($matcher); //No need to call updateTimeout() first, it is done by the un-serialisation
             $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
         }
         ini_restore('unserialize_callback_func');
