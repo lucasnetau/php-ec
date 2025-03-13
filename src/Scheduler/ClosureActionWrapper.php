@@ -12,6 +12,8 @@
 namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
 use React\Promise\Promise;
+use ReflectionException;
+use ReflectionFunction;
 use RuntimeException;
 use Closure;
 use Psr\Log\LoggerAwareInterface;
@@ -32,16 +34,14 @@ class ClosureActionWrapper implements LoggerAwareInterface {
         }
 
         $callable = $callback(...);
-        $bound = @$callable->bindTo($this, $this); //Bind the closure if we can to this instance of ClosureActionWrapper giving access to the Logger
-        $this->closure = $bound ?? $callable;
+        $this->closure = $this->isBindable($callable) ? $callable->bindTo($this,$this) : $callable;
     }
 
     public function __invoke(array $args): Promise
     {
         $resolver = function (callable $resolve, callable $reject) use ($args) {
             try {
-                $closure = $this->closure;
-                $resolve($closure($args));
+                $resolve(($this->closure)($args));
             } catch (\Throwable $e) {
                 $reject(new RuntimeException($e->getMessage(), $e->getCode(), $e));
             }
@@ -55,5 +55,27 @@ class ClosureActionWrapper implements LoggerAwareInterface {
         };
 
         return new Promise($resolver, $canceller);
+    }
+
+    /**
+     * @param Closure $callable
+     *
+     * @return bool
+     * @throws ReflectionException
+     */
+    private function isBindable(Closure $callable)
+    {
+        $bindable = false;
+
+        $reflectionFunction = new ReflectionFunction($callable);
+        if (
+            $reflectionFunction->getClosureScopeClass() === null
+            || $reflectionFunction->getClosureThis() !== null
+            && $reflectionFunction->getName() !== '__invoke'
+        ) {
+            $bindable = true;
+        }
+
+        return $bindable;
     }
 }
