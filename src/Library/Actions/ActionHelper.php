@@ -94,7 +94,9 @@ class ActionHelper extends EventEmitter {
                 } catch (\Throwable $t) {
                     $this->logger->log(LogLevel::CRITICAL, 'Terminating action process on unhandled exception', ['exception' => $t]);
                     $this->exitCode = 1;
-                    $this->stop();
+                    $this->loop->futureTick(function () {
+                        $this->stop();
+                    });
                 }
             } else {
                 if ($rpc instanceof JsonRpcRequest) {
@@ -115,7 +117,6 @@ class ActionHelper extends EventEmitter {
             //Don't try to do anything else, our output has closed, we are either shutting down or we cannot communicate with scheduler
             $this->loop->removeSignal(SIGINT, $this->signalHandler);
             $this->loop->removeSignal(SIGTERM, $this->signalHandler);
-            unset($this->logger);
             $this->loop->stop();
         });
 
