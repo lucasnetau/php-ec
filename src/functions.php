@@ -13,6 +13,7 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
+use Nette\PhpGenerator\Parameter;
 use Psr\Log\LogLevel;
 use React\EventLoop\Loop;
 use RuntimeException;
@@ -23,6 +24,7 @@ use function escapeshellarg;
 use function file_exists;
 use function function_exists;
 use function fwrite;
+use function is_resource;
 use function json_encode;
 use function posix_setpgid;
 use function realpath;
@@ -189,14 +191,22 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
         register_shutdown_function(function () {
             $last_error = error_get_last();
             if (($last_error['type'] ?? 0) & (E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR | E_RECOVERABLE_ERROR)) {
-                fwrite(STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY,
-                        "Fatal Error ({$last_error['file']}:{$last_error['line']}): {$last_error["message"]}")) . "\n");
+                $error_message = "Fatal Error ({$last_error['file']}:{$last_error['line']}): {$last_error["message"]}";
+                if (\STDOUT !== false && is_resource(\STDOUT)) {
+                    fwrite(\STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY, $error_message)) . "\n");
+                } else {
+                    error_log($error_message);
+                }
             }
         });
         //If any unhandled exception occur then log them to STDOUT (skip the and WritableStreamInterface $output) then terminate the Loop
         set_exception_handler(function (Throwable $exception) use ($usingEventLoop) {
-            fwrite(STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY,
-                    "Process terminating on uncaught exception. " . $exception->getMessage() . "\n" . $exception->getTraceAsString())) . "\n");
+            $error_message = "Process terminating on uncaught exception. " . $exception->getMessage() . "\n" . $exception->getTraceAsString();
+            if (\STDOUT !== false && is_resource(\STDOUT)) {
+                fwrite(\STDOUT, json_encode(rpcLogMessage(LogLevel::EMERGENCY, $error_message)) . "\n");
+            } else {
+                error_log($error_message);
+            }
             if ($usingEventLoop) {
                 Loop::stop();
             }
