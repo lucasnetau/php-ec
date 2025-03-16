@@ -14,12 +14,16 @@ namespace EdgeTelemetrics\EventCorrelation\Rule;
 use Cron\CronExpression;
 use DateTimeImmutable;
 use DateTimeInterface;
+use DateTimeZone;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Rule;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use Exception;
+use function array_filter;
+use function class_exists;
 use function count;
 use function in_array;
+use function max;
 
 /**
  * Class Cron
@@ -29,6 +33,17 @@ abstract class Cron extends Rule
 {
     /**
      * @var string
+     *
+     * Can be a Cron schedule or an alias
+     * '@yearly' => '0 0 1 1 *',
+     * '@annually' => '0 0 1 1 *',
+     * '@monthly' => '0 0 1 * *',
+     * '@weekly' => '0 0 * * 0',
+     * '@daily' => '0 0 * * *',
+     * '@midnight' => '0 0 * * *',
+     * '@hourly' => '0 * * * *',
+     * @reboot When we receive an initialisation event
+     * @shutdown When we receive a shutdown event
      */
     const CRON_SCHEDULE = '';
 
@@ -53,11 +68,23 @@ abstract class Cron extends Rule
      */
     private ?DateTimeInterface $cronLastRun = null;
 
-    public function __construct()
+    private ?string $cronTimezone;
+
+    public function __construct(string|null $schedule = null, string|\DateTimeZone|null $timezone = null)
     {
+        if (!class_exists(CronExpression::class)) {
+            throw new \RuntimeException('dragonmantank/cron-expression must be installed to use Cron rules');
+        }
         parent::__construct();
-        if (!in_array(static::CRON_SCHEDULE, [self::ON_INITIALISATION, self::ON_SHUTDOWN], true)) {
-            $this->cron = new CronExpression(static::CRON_SCHEDULE);
+        $timezone ??= static::TIMEZONE;
+        if ($timezone instanceof DateTimeZone) {
+            $timezone = $timezone->getName();
+        }
+        $this->cronTimezone = $timezone;
+
+        $schedule ??= static::CRON_SCHEDULE;
+        if (!in_array($schedule, [self::ON_INITIALISATION, self::ON_SHUTDOWN], true)) {
+            $this->cron = new CronExpression($schedule);
         }
     }
 
@@ -182,7 +209,7 @@ abstract class Cron extends Rule
                 $currentTime = max($times);
             }
             try {
-                $this->timeout = DateTimeImmutable::createFromMutable($this->cron->getNextRunDate($currentTime, 0, false, static::TIMEZONE));
+                $this->timeout = DateTimeImmutable::createFromMutable($this->cron->getNextRunDate($currentTime, 0, false, $this->cronTimezone));
             } catch (Exception) {
                 //Cron is invalid
                 $this->timeout = null;
