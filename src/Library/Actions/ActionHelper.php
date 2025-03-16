@@ -25,6 +25,7 @@ use React\Stream\WritableResourceStream;
 
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
 use function EdgeTelemetrics\EventCorrelation\setupErrorHandling;
+use function fopen;
 use function function_exists;
 
 /**
@@ -72,10 +73,10 @@ class ActionHelper extends EventEmitter {
 
         $buffer_size = $options['json_buffer_size'] ?? self::INPUT_BUFFER_SIZE;
 
-        $this->input = new Decoder(new ReadableResourceStream(STDIN), $buffer_size);
-        $this->output = new Encoder(new WritableResourceStream(STDOUT));
-
-        $this->logger = new JsonRpcLogger(LogLevel::DEBUG, STDOUT);
+        //Open our own handle to stdin and stdout instead of using STDIN/STDOUT so that when the Stream reader/writes close they don't close STDOUT/STDIN
+        $this->input = new Decoder(new ReadableResourceStream(fopen('php://stdin', 'r')), $buffer_size);
+        $this->output = new Encoder(new WritableResourceStream(fopen('php://stdout', 'w')));
+        $this->logger = new JsonRpcLogger(LogLevel::DEBUG, new WritableResourceStream(fopen('php://stdout', 'w')));
 
         $this->input->on('error', function($exception) use ($buffer_size) {
             if ($exception instanceof \OverflowException) {
@@ -145,6 +146,14 @@ class ActionHelper extends EventEmitter {
     }
 
     /**
+     * @param int $exitCode
+     * @return void
+     */
+    public function setExitCode(int $exitCode) : void {
+        $this->exitCode = $exitCode;
+    }
+
+    /**
      * Helper function to log through to the Scheduler
      * @param string $logLevel
      * @param string $message
@@ -172,9 +181,7 @@ class ActionHelper extends EventEmitter {
      */
     public function stop() : void {
         if ($this->input->isReadable()) {
-            $this->loop->addTimer(0.1, function () {
-                $this->input->close();
-            });
+            $this->input->close();
         } else if ($this->output->isWritable()) {
             $this->output->end();
         }
