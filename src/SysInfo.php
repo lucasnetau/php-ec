@@ -145,6 +145,7 @@ class SysInfo {
 
     /**
      * Load CGroup memory limits if set, honouring Soft limit
+     * https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#memory-interface-files
      * @return int
      */
     public function getCgroupMemoryLimit() : int {
@@ -155,7 +156,7 @@ class SysInfo {
         foreach(self::CGROUP_FILE_PATHS as $path) {
             if (file_exists($path)) {
                 $cgroup_limit = @file_get_contents($path);
-                if ($cgroup_limit === false) {
+                if ($cgroup_limit === false || $cgroup_limit === "max\n") {
                     continue;
                 }
                 $limit = min($limit, (int)$cgroup_limit);
