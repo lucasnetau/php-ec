@@ -15,7 +15,6 @@ use function array_filter;
 use function count;
 use function exec;
 use function explode;
-use function file_exists;
 use function file_get_contents;
 use function ini_get;
 use function min;
@@ -26,6 +25,8 @@ use function trim;
 class SysInfo {
 
     const NO_LIMIT = -1;
+
+    const CGROUP_MAX = "max\n";
 
     const CGROUP_FILE_PATHS = [
         "/sys/fs/cgroup/memory/memory.limit_in_bytes",  # cgroups v1 hard limit
@@ -155,7 +156,7 @@ class SysInfo {
         $limit = PHP_INT_MAX;
         foreach(self::CGROUP_FILE_PATHS as $path) {
             $cgroup_limit = @file_get_contents($path);
-            if ($cgroup_limit === false || $cgroup_limit === "max\n") {
+            if ($cgroup_limit === false || $cgroup_limit === self::CGROUP_MAX) {
                 continue;
             }
             $limit = min($limit, (int)$cgroup_limit);
