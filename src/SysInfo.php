@@ -154,13 +154,11 @@ class SysInfo {
         }
         $limit = PHP_INT_MAX;
         foreach(self::CGROUP_FILE_PATHS as $path) {
-            if (file_exists($path)) {
-                $cgroup_limit = @file_get_contents($path);
-                if ($cgroup_limit === false || $cgroup_limit === "max\n") {
-                    continue;
-                }
-                $limit = min($limit, (int)$cgroup_limit);
+            $cgroup_limit = @file_get_contents($path);
+            if ($cgroup_limit === false || $cgroup_limit === "max\n") {
+                continue;
             }
+            $limit = min($limit, (int)$cgroup_limit);
         }
 
         return ($limit === PHP_INT_MAX) ? self::NO_LIMIT : $limit;
