@@ -47,11 +47,16 @@ class Action implements JsonSerializable {
     /**
      * @return array
      */
-    public function jsonSerialize() : array
-    {
+    public function jsonSerialize() : array {
+        $vars = array_map(function($var) {
+            if ($var instanceof \DateTimeInterface) {
+                return $var->format(IEvent::DATETIME_SERIALISATION_FORMAT);
+            }
+            return $var;
+        }, $this->vars);
         return [
             'cmd' => $this->cmd,
-            'vars' => $this->vars
+            'vars' => $vars
         ];
     }
 
