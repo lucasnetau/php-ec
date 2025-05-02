@@ -11,7 +11,6 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
-use Closure;
 use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
@@ -306,8 +305,9 @@ class Scheduler implements LoggerAwareInterface {
 
     /**
      * @return void
+     * @throws Throwable
      */
-    public function initialise_input_processes() : void {
+    protected function initialise_input_processes() : void {
         $this->logger->debug('Initialising input processes');
         foreach ($this->input_processes_config as $id => $config) {
             if ($config['autostart'] === true) {
@@ -322,7 +322,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->state = new State(State::RUNNING);
     }
 
-    public function initialise_input_process(int|string $id) : Process|SourceFunction {
+    protected function initialise_input_process(int|string $id) : Process|SourceFunction {
         $config = $this->input_processes_config[$id];
         if (is_subclass_of($config['cmd'], SourceFunction::class)) {
             return $this->setup_source_function($id);
@@ -331,7 +331,7 @@ class Scheduler implements LoggerAwareInterface {
         }
     }
 
-    public function setup_source_function(int|string $id): SourceFunction
+    protected function setup_source_function(int|string $id): SourceFunction
     {
         $config = $this->input_processes_config[$id];
         $cmd = is_string($config['cmd']) ? new $config['cmd']() : clone $config['cmd'];
@@ -373,7 +373,7 @@ class Scheduler implements LoggerAwareInterface {
      * @param int|string $id
      * @return Process
      */
-    public function start_input_process(int|string $id) : Process {
+    protected function start_input_process(int|string $id) : Process {
         if (isset($this->input_processes[$id])) {
             $this->logger->critical('Input process ' . $id . ' already running');
             return $this->input_processes[$id];
@@ -408,7 +408,7 @@ class Scheduler implements LoggerAwareInterface {
      * @param Process $process
      * @param int|string $id
      */
-    public function setup_input_process(Process $process, int|string $id): void
+    protected function setup_input_process(Process $process, int|string $id): void
     {
         try {
             $process->start($this->loop);
@@ -560,7 +560,7 @@ class Scheduler implements LoggerAwareInterface {
      * @param string $actionName
      * @return Process
      */
-    public function start_action(string $actionName): Process
+    protected function start_action(string $actionName): Process
     {
         $actionConfig = $this->actionConfig[$actionName];
         /** @TODO: Handle singleShot processes true === $actionConfig['singleShot'] treat as not running for accounting */
@@ -736,10 +736,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->saveFileName = $filename;
     }
 
-    /**
-     *
-     */
-    public function setup_save_state() : void
+    protected function setup_save_state() : void
     {
         /**
          * Set up a time to save the state of the correlation engine every saveStateSeconds
@@ -1160,7 +1157,7 @@ class Scheduler implements LoggerAwareInterface {
     /**
      * @param array $state
      */
-    public function setState(array $state) : void
+    protected function setState(array $state) : void
     {
         $this->input_processes_checkpoints = $state['input']['checkpoints'];
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
