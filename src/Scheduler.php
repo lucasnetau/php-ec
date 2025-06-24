@@ -724,7 +724,11 @@ class Scheduler implements LoggerAwareInterface {
                 $process->stdin->write(json_encode($rpc_request) . "\n");
             }
         } else {
-            $this->logger->error("Unable to start unknown action " . json_encode($action));
+            $this->logger->error("Action $actionName is not defined");
+            $this->erroredActionCommands[] = [
+                'error' => "Unable to start undefined action $actionName",
+                'action' => $action,
+            ];
         }
     }
 
