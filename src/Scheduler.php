@@ -1205,16 +1205,16 @@ class Scheduler implements LoggerAwareInterface {
 
         $current_memory_usage = memory_get_usage();
 
-        $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
+        $percent_used = (int)round(($current_memory_usage / $this->memoryLimit) * 100);
 
         /** Try releasing memory first and recalculate percentage used */
-        if ($this->pausedOnMemoryPressure || $percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK) {
+        if ($percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK) {
             /** Running this every check cycle negatively impacts the scheduler's performance,
-             *  however since we are paused (or going to pause) at this stage, and are awaiting the external action processes to complete the actual impact will be minimal
+             *   however, since we are paused (or going to pause) at this stage, and are awaiting the external action processes to complete the actual impact will be minimal
              */
             $this->memoryReclaim();
             $current_memory_usage = memory_get_usage();
-            $percent_used = (int)(($current_memory_usage / $this->memoryLimit) * 100);
+            $percent_used = (int)round(($current_memory_usage / $this->memoryLimit) * 100);
         }
 
         $this->currentMemoryPercentUsed = $percent_used;
@@ -1237,12 +1237,18 @@ class Scheduler implements LoggerAwareInterface {
             $this->pausedOnMemoryPressure = true;
             ++$this->pausedOnMemoryPressureCount;
 
+            $inflightActionCount = count($this->inflightActionCommands);
             /** @TODO take into account delaying shutdown if we still have some outstanding actions and memory usage is dropping */
-            $this->scheduledTasks['pausedOnMemoryPressureTimer'] = $this->loop->addTimer(300, function() {
-                if ($this->pausedOnMemoryPressure) {
-                    $this->logger->critical("Timeout! Input processes are still paused, shutting down");
+            $this->scheduledTasks['pausedOnMemoryPressureTimer'] = $this->loop->addPeriodicTimer(300, function() use (&$inflightActionCount) {
+                $currentActionCount = count($this->inflightActionCommands);
+                if ($currentActionCount < $inflightActionCount) {
+                    $this->logger->debug("Current action count dropped from {old} to {new}", ['old' => $inflightActionCount, 'new' => $currentActionCount]);;
+                }
+                if ($this->pausedOnMemoryPressure && $currentActionCount >= $inflightActionCount) {
+                    $this->logger->critical("Timeout! Input processes are still paused and inflight actions not reducing, shutting down");
                     $this->shutdown();
                 }
+                $inflightActionCount = $currentActionCount;
             });
         }
         else
@@ -1256,6 +1262,7 @@ class Scheduler implements LoggerAwareInterface {
                     $this->loop->cancelTimer($this->scheduledTasks['pausedOnMemoryPressureTimer']);
                     unset($this->scheduledTasks['pausedOnMemoryPressureTimer']);
                 }
+                $this->memoryReclaim();
                 //Resume input
                 foreach ($this->input_processes as $processId => $process) {
                     $process->terminate(SIGCONT);
