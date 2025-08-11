@@ -449,9 +449,9 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         /**
-         * Log any errors we receive on the processed STDERR, error is a fatal event and the stream will be closed, so we need to terminate the process since it can no longer communicate with us
+         * Log any errors we receive on the processed STDERR, error is a fatal event, and the stream will be closed, so we need to terminate the process since it can no longer communicate with us
          */
-        $process_decoded_stdout->on('error', function(Exception $error) use ($id, $process) {
+        $process_decoded_stdout->on('error', function(Throwable $error) use ($id, $process) {
             $this->logger->error("{id}", ['id'=> $id, 'exception' => $error,]);
             $process->terminate(SIGTERM);
         });
@@ -872,7 +872,7 @@ class Scheduler implements LoggerAwareInterface {
             try {
                 $this->setState($savedState['scheduler']);
                 $this->engine->setState($savedState['engine']);
-            } catch (Exception $ex) {
+            } catch (Throwable $ex) {
                 $this->logger->emergency("A fatal exception was thrown while loading previous saved state.", ['exception' => $ex]);
                 $this->panic($ex);
             }
