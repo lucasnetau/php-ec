@@ -101,7 +101,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\checkpoint')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
-    function php_cmd(string $filename, bool $asArray = false): string|array
+    function php_cmd(string $filename, bool $asArray = true): string|array
     {
         if (!file_exists($filename)) {
             $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
@@ -124,7 +124,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
 }
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
-    function wrap_source_php_cmd(string $filename, bool $asArray = false): string|array
+    function wrap_source_php_cmd(string $filename, bool $asArray = true): string|array
     {
         if (!file_exists($filename)) {
             $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
