@@ -11,9 +11,7 @@ class BatchClock implements ClockInterface {
 
     private DateTimeImmutable $now;
 
-    public function __construct(private ?LoopInterface $loop = null)
-    {
-        $this->loop ??= Loop::get();
+    public function __construct() {
         $this->now = new DateTimeImmutable('@0');
     }
 
