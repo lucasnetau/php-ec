@@ -13,33 +13,15 @@ class CheckOrderPayment extends Rule {
     public function acceptEvent(Event $event) :bool
     {
         /** We will only handle matching for a single order so record this on the first entry and check it on the second event. */
-        if (0 === count($this->consumedEvents))
-        {
-            $this->context['orderid'] = $event->orderid;
-            return true;
-        } else {
-            return ($this->context['orderid'] === $event->orderid);
-        }
+        $this->context['orderid'] ??= $event->orderid;
+        return ($this->context['orderid'] === $event->orderid);
     }
 
-    public function fire() : void
+    public function onTimeout(): void
     {
-        if (!$this->actionFired)
-        {
-            if ($this->complete())
-            {
-                //noop, nothing to do on success
-                $this->actionFired = true;
-            }
-            else if ($this->isTimedOut())
-            {
-                echo "Order {$this->context['orderid']} not paid on time, sending reminder to customer\n";
-                $event = new Event(['event' => 'shop:order:payment:timeout']);
-                $this->emit("data", [$event]);
-                $this->actionFired = true; //Ensure we set this before sending off an event
-
-            }
-        }
+        echo "Order {$this->context['orderid']} not paid on time, sending reminder to customer\n";
+        $event = new Event(['event' => 'shop:order:payment:timeout']);
+        $this->emit("data", [$event]);
+        $this->actionFired = true; //Ensure we set this before sending off an event
     }
-
 }

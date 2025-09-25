@@ -7,13 +7,10 @@ class OrderPaymentReminder extends Rule {
 
     const EVENTS = [['Order:Payment:Timeout']];
 
-    public function fire() : void
+    public function onComplete() : void
     {
-        if ($this->complete() && !$this->actionFired)
-        {
-            $action = new Action("send-email", ['orderid' => $this->consumedEvents[0]->orderid, 'subject' => 'Order Payment Reminder']);
-            $this->emit('data', [$action]);
-            $this->actionFired = true;
-        }
+        $action = new Action("send-email", ['orderid' => $this->consumedEvents[0]->orderid, 'subject' => 'Order Payment Reminder']);
+        $this->emit('data', [$action]);
+        $this->actionFired = true;
     }
 }
