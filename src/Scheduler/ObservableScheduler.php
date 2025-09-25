@@ -69,11 +69,11 @@ class ObservableScheduler extends Scheduler {
     }
 
     public function getNextScheduledTimer() : DateTimeImmutable|null {
-        if ($this->nextTimer === null) {
+        if ($this->engine->nextTimer === null) {
             return null;
         }
 
-        return $this->timerScheduledAt->modify("+" . round($this->nextTimer->getInterval() * 1e6) . ' microseconds');
+        return $this->engine->timerScheduledAt->modify("+" . round($this->engine->nextTimer->getInterval() * 1e6) . ' microseconds');
     }
 
     /** Overridden Functions */

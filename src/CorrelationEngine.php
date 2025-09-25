@@ -12,46 +12,54 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use DateInterval;
+use DateTimeImmutable;
+use EdgeTelemetrics\EventCorrelation\Clocks\BatchClock;
+use EdgeTelemetrics\EventCorrelation\Clocks\TickClock;
 use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
 use EdgeTelemetrics\EventCorrelation\Scheduler\Messages\ExecuteSource;
 use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
-use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
-use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IActionGenerator;
+use EdgeTelemetrics\EventCorrelation\StateMachine\IEventGenerator;
+use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use Evenement\EventEmitterInterface;
 use Evenement\EventEmitterTrait;
-use DateTimeImmutable;
-use DateTimeInterface;
 use Exception;
+use Psr\Clock\ClockInterface;
+use Psr\Log\LoggerAwareInterface;
+use Psr\Log\LoggerAwareTrait;
+use React\EventLoop\Loop;
+use React\EventLoop\TimerInterface;
 use ReflectionClass;
 use RuntimeException;
-
 use function abs;
 use function array_key_exists;
 use function array_keys;
 use function array_merge;
+use function array_slice;
+use function array_sum;
 use function class_exists;
 use function fwrite;
+use function implode;
 use function in_array;
 use function ini_restore;
 use function ini_set;
+use function is_a;
 use function is_array;
 use function is_object;
 use function is_string;
+use function json_encode;
 use function round;
 use function spl_object_id;
-use function is_a;
-use function array_sum;
-use function array_slice;
 use function uasort;
 use function unserialize;
-use function implode;
 
 /**
  * Class CorrelationEngine
  * @package EdgeTelemetrics\EventCorrelation
  */
-class CorrelationEngine implements EventEmitterInterface {
+class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
+    /** PSR3 logger provides $this->logger */
+    use LoggerAwareTrait;
     use EventEmitterTrait;
 
     /**
@@ -80,6 +88,8 @@ class CorrelationEngine implements EventEmitterInterface {
 
     protected Counter $epsCounter;
 
+    protected ClockInterface $referenceClock;
+
     /**
      * Counter length (in seconds) for recording events per second metrics.
      */
@@ -102,14 +112,24 @@ class CorrelationEngine implements EventEmitterInterface {
     protected array $matcherConstructor = [];
 
     /**
+     * @var ?TimerInterface
+     */
+    public ?TimerInterface $nextTimer = null;
+
+    /**
+     * @var DateTimeImmutable
+     */
+    public DateTimeImmutable $timerScheduledAt;
+
+    /**
      * CorrelationEngine constructor.
      * @param class-string<IEventMatcher>[]|array[]|IEventMatcher[] $rules Class name of rules to load
      * @throws RuntimeException
      */
     public function __construct(array $rules)
     {
-        foreach($rules as $matcher)
-        {
+        $this->referenceClock = new BatchClock();
+        foreach($rules as $matcher) {
             //Rules may be defined with ['Rule::class',['constructor param']], 'Rule::class' classname, or an initialised Rule
             if (is_array($matcher)) {
                 if (isset($this->matcherConstructor[$matcher[0]])) {
@@ -122,8 +142,7 @@ class CorrelationEngine implements EventEmitterInterface {
                 throw new RuntimeException('Invalid Rule class name: ' . $matcher);
             }
             /** @var class-string<IEventMatcher> $eventname */
-            foreach($matcher::initialAcceptedEvents() as $eventname)
-            {
+            foreach($matcher::initialAcceptedEvents() as $eventname) {
                 $this->initialEventLookup[$eventname][] = $matcher;
             }
         }
@@ -144,7 +163,6 @@ class CorrelationEngine implements EventEmitterInterface {
      * @param Event $event
      * @throws Exception
      * @TODO Setup queueing of incoming events in a time bucket, setup an out of order tolerance with the help of the bucket to re-ordering incoming events
-     * @TODO Clock source for non-live timestreams should be largest time seen minus the out of order tolerance
      */
     public function handle(Event $event) : void
     {
@@ -156,13 +174,14 @@ class CorrelationEngine implements EventEmitterInterface {
         /** Record that we have seen an event of this type */
         $this->incrStat('seen', (string)$event->event);
 
+        $this->logger?->debug('Handling ' . json_encode($event));
 
         if ($this->eventstream_live) {
             /**
-             * If the event stream is live we want to make sure the event timestamp is within
+             * If the event stream is live, we want to make sure the event timestamp is within
              *  MAX_TIME_VARIANCE seconds of the current time, otherwise we will set it to the server time.
              */
-            $now = new DateTimeImmutable();
+            $now = $this->referenceClock->now();
             if (abs($now->getTimestamp() - $event->datetime->getTimestamp()) > (self::MAX_TIME_VARIANCE)) {
                 echo "Correcting received time to {$now->format('c')}\n";
                 $event->setReceivedTime($now);
@@ -170,11 +189,13 @@ class CorrelationEngine implements EventEmitterInterface {
         } else {
             /** When we are parsing historical event stream data manually trigger any timeouts up till the current event (CheckTimeouts triggers event prior to the time passed in)
              * Any timeouts at the current time will be triggered after handling the current incoming event
+             * @TODO Clock source for non-live timestreams should be largest time seen minus the out of order tolerance
              * @TODO This might not be the best place to call this where multiple stream interlace with different timestamps.
              * @TODO This should be moved to checking if a matcher would handle the event then to call it's timeout check first and other items.
              */
             if (!in_array($event->event, Scheduler::CONTROL_MESSAGES, true)) {
-                $this->checkTimeouts($event->datetime->modify('-1 second'));
+                $this->referenceClock->set($event->datetime->modify('-1 millisecond'));
+                $this->triggerTimeouts();
             }
         }
 
@@ -214,7 +235,7 @@ class CorrelationEngine implements EventEmitterInterface {
         }
 
         /**
-         * Finally check if we need to start up any more state machines for this event.
+         * Finally, check if we need to start up any more state machines for this event.
          * A new state machine will not be created if an existing state machine suppressed the event
          * or if a state machine of the same class handled the event
          */
@@ -295,6 +316,13 @@ class CorrelationEngine implements EventEmitterInterface {
 
         /** Increment event per second counters */
         $this->epsCounter->increment();
+
+        /**
+         * If we are running in real-time, then schedule a timer for the next timeout
+         */
+        if ($this->isRealtime()) {
+            $this->scheduleNextTimeout();
+        }
     }
 
     /**
@@ -459,8 +487,8 @@ class CorrelationEngine implements EventEmitterInterface {
     }
 
     /**
-     * Get the current timeouts for all running state machines. Sort the list prior to returning
-     * @return array<string, mixed>
+     * Get the current timeouts for all running state machines. Sort the list before returning
+     * @return array{timeout: DateTimeImmutable, matcher: IEventMatcher}[]
      */
     public function getTimeouts(): array
     {
@@ -473,7 +501,48 @@ class CorrelationEngine implements EventEmitterInterface {
     }
 
     /**
+     * Scheduling timeouts is only supported when the engine is running in live mode.
+     * The Correlation engine will check timeouts for batch mode within the handle() function
+     * @throws Exception
+     */
+    protected function scheduleNextTimeout() : void
+    {
+        /**
+         * Cancel the current timeout and set up the next one
+         */
+        if (null !== $this->nextTimer) {
+            Loop::get()->cancelTimer($this->nextTimer);
+            $this->nextTimer = null;
+            $this->dirty = true;
+        }
+
+        $timeouts = $this->getTimeouts();
+        if (!empty($timeouts)) {
+            $nextTimeout = $timeouts[array_key_first($timeouts)];
+            $now = $this->referenceClock->now();
+            $difference = (float)$nextTimeout['timeout']->format('U.u') - (float)$now->format('U.u');
+
+            //If timeout has already past then manually check, this may block if we have fallen behind
+            if ($difference <= 0) {
+                $this->triggerTimeouts();
+                $this->scheduleNextTimeout();
+            } else {
+                $this->nextTimer = Loop::get()->addTimer($difference, function () {
+                    /** We only set a timer for the next one required, however we many have a few to process at the
+                     * same time. Use the check timeouts function to process any and all timeouts.
+                     */
+                    $this->triggerTimeouts();
+                    $this->scheduleNextTimeout();
+                });
+                $this->timerScheduledAt = $now;
+                $this->dirty = true;
+            }
+        }
+    }
+
+    /**
      * Set the Engine to start processing events in real-time against the clock vs historical data
+     * @TODO rename this setClock???
      */
     public function setEventStreamLive() : void
     {
@@ -483,14 +552,14 @@ class CorrelationEngine implements EventEmitterInterface {
          */
         $this->eventstream_live = true;
         StateMachine\AEventProcessor::setEventStreamLive();
+        $this->referenceClock = new TickClock();
         $this->timeouts = [];
 
-        foreach($this->eventProcessors as $matcher )
-        {
+        foreach($this->eventProcessors as $matcher ) {
             $matcher->updateTimeout();
             $this->addTimeout($matcher);
         }
-        $this->checkTimeouts(new DateTimeImmutable());
+        $this->triggerTimeouts();
     }
 
     /**
@@ -504,25 +573,25 @@ class CorrelationEngine implements EventEmitterInterface {
 
     /**
      * Check if any timeouts are prior to the $time passed and if so trigger the timeout logic for the respective matcher
-     * @param DateTimeInterface $time
      * @return int Returns the number of alarms triggered by timeouts
      */
-    public function checkTimeouts(DateTimeInterface $time): int
+    public function triggerTimeouts(): int
     {
+        $time = $this->referenceClock->now();
         $triggered = 0;
-        foreach ( $this->getTimeouts() as $timeout)
-        {
-            if ($time >= $timeout['timeout'])
-            {
+        foreach ($this->getTimeouts() as $timeout) {
+            if ($time >= $timeout['timeout']) {
                 /**
                  * @var IEventMatcher $matcher
                  */
                 $matcher = $timeout['matcher'];
+                $this->logger?->debug('Alarm firing on ' . $matcher::class . "(" . spl_object_id($matcher) . ")");
                 $matcher->alarm();
                 $matcher->fire(); //@TODO check if only want to do this when it is timed out
                 $triggered++;
                 $this->clearWatchForEvents($matcher);
                 if ($matcher->isTimedOut()) {
+                    $this->logger?->debug('Matcher finished after alarm ' . $matcher::class . "(" . spl_object_id($matcher) . ")");
                     /** Remove all references if the matcher is timed out */
                     $this->removeTimeout($matcher);
                     /** Record stat of matcher timeout */
@@ -531,6 +600,7 @@ class CorrelationEngine implements EventEmitterInterface {
                     unset($matcher);
                 } else {
                     /** Update the timeout for this matcher after it has alarmed but has not timed out */
+                    $this->logger?->debug('Matcher not complete after alarm ' . $matcher::class . "(" . spl_object_id($matcher) . ")");
                     $this->addTimeout($matcher);
                     $this->addWatchForEvents($matcher, $matcher->nextAcceptedEvents());
                 }
@@ -556,8 +626,9 @@ class CorrelationEngine implements EventEmitterInterface {
         $state['matchers'] = [];
         $state['events'] = [];
         $state['statistics'] = $this->statistics;
+        $state['nextTimeout'] = $this->nextTimer === null ? 'none' : $this->timerScheduledAt->modify("+" . round($this->nextTimer->getInterval() * 1e6) . ' microseconds')->format('c');
         $state['load'] = $this->calcLoad();
-        /** @var IEventMatcher $matcher */
+
         foreach($this->eventProcessors as $matcher) {
             if ($matcher->complete()) {
                 continue; //Don't save the matcher if it is complete

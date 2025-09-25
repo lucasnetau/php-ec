@@ -11,7 +11,6 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
-use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
@@ -20,9 +19,7 @@ use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
-use Exception;
 use Psr\Log\LoggerAwareInterface;
-use Psr\Log\LoggerAwareTrait;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
 use Psr\Log\NullLogger;
@@ -39,7 +36,6 @@ use RuntimeException;
 use Throwable;
 use function array_filter;
 use function array_key_exists;
-use function array_key_first;
 use function array_keys;
 use function array_map;
 use function array_pop;
@@ -79,9 +75,6 @@ use const SIGHUP;
  * @property LoggerInterface $logger
  */
 class Scheduler implements LoggerAwareInterface {
-    /** PSR3 logger provides $this->logger */
-    use LoggerAwareTrait;
-
     const CHECKPOINT_VARNAME = 'PHPEC_CHECKPOINT';
 
     /** @var float hrtime for when the scheduler is started */
@@ -99,16 +92,6 @@ class Scheduler implements LoggerAwareInterface {
      * @var CorrelationEngine
      */
     protected CorrelationEngine $engine;
-
-    /**
-     * @var ?TimerInterface
-     */
-    protected ?TimerInterface $nextTimer = null;
-
-    /**
-     * @var DateTimeImmutable
-     */
-    protected DateTimeImmutable $timerScheduledAt;
 
     /**
      * @var Process[] Process table for running input processes
@@ -267,6 +250,17 @@ class Scheduler implements LoggerAwareInterface {
     /** @var int Seconds to delay before the first heartbeat is sent */
     private int $heartbeat_initialDelay = 0;
 
+    /** @var ?LoggerInterface PSR-3 Logger */
+    protected ?LoggerInterface $logger = null;
+
+    /**
+     * Sets a logger.
+     */
+    public function setLogger(LoggerInterface $logger): void {
+        $this->logger = $logger;
+        $this->engine->setLogger($logger);
+    }
+
     /**
      * @param array<class-string<IEventMatcher>> $rules An array of Rules defined by classNames
      */
@@ -276,9 +270,9 @@ class Scheduler implements LoggerAwareInterface {
         $this->loop = Loop::get();
         $this->schedulerStartTime = hrtime(true);
         $this->rules = $rules;
-        $this->logger = new NullLogger();
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
+        $this->setLogger(new NullLogger());
     }
 
     /**
@@ -522,12 +516,6 @@ class Scheduler implements LoggerAwareInterface {
     protected function handleEvent(Event $event): void {
         try {
             $this->engine->handle($event);
-            /**
-             * If we are running in real time then schedule a timer for the next timeout
-             */
-            if ($this->engine->isRealtime()) {
-                $this->scheduleNextTimeout();
-            }
         } catch (Throwable $ex) {
             $this->logger->emergency("Rules must not throw exceptions", ['exception' => $ex]);
             $this->panic($ex);
@@ -811,50 +799,6 @@ class Scheduler implements LoggerAwareInterface {
     }
 
     /**
-     * Scheduling timeouts is only supported when the engine is running in live mode. The Correlation engine will check timeouts for batch mode within the handle() function
-     * @throws Exception
-     */
-    protected function scheduleNextTimeout() : void
-    {
-        /**
-         * Cancel current timeout and set up the next one
-         */
-        if (null !== $this->nextTimer) {
-            $this->loop->cancelTimer($this->nextTimer);
-            $this->nextTimer = null;
-            $this->dirty = true;
-        }
-
-        //Do not schedule any timeout if we are in the process of shutting down
-        if ($this->state->isStopping()) {
-            return;
-        }
-
-        $timeouts = $this->engine->getTimeouts();
-        if (!empty($timeouts)) {
-            $nextTimeout = $timeouts[array_key_first($timeouts)];
-            $now = new DateTimeImmutable();
-            $difference = (float)$nextTimeout['timeout']->format('U.u') - (float)$now->format('U.u');
-
-            //If timeout has already past then manually check, this may block if we have fallen behind
-            if ($difference <= 0) {
-                $this->engine->checkTimeouts(new DateTimeImmutable());
-                $this->scheduleNextTimeout();
-            } else {
-                $this->nextTimer = $this->loop->addTimer($difference, function (){
-                    /** We only set a timer for the next one required, however we many have a few to process at the
-                     * same time. Use the check timeouts function to process any and all timeouts.
-                     */
-                    $this->engine->checkTimeouts(new DateTimeImmutable());
-                    $this->scheduleNextTimeout();
-                });
-                $this->timerScheduledAt = new DateTimeImmutable();
-                $this->dirty = true;
-            }
-        }
-    }
-
-    /**
      * Boot up from a saved state file
      */
     protected function restoreState() : void
@@ -1030,11 +974,6 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function shutdown() : void {
         $this->state = new State(State::STOPPING);
-        if (null !== $this->nextTimer) {
-            $this->loop->cancelTimer($this->nextTimer);
-            $this->nextTimer = null;
-        }
-
         while ($task = array_pop($this->scheduledTasks)) {
             $this->loop->cancelTimer($task);
             $task = null;
@@ -1148,7 +1087,6 @@ class Scheduler implements LoggerAwareInterface {
         $state['input']['running'] = array_keys($this->input_processes);
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
         $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
-        $state['nextTimeout'] = $this->nextTimer === null ? 'none' : $this->timerScheduledAt->modify("+" . round($this->nextTimer->getInterval() * 1e6) . ' microseconds')->format('c');
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
