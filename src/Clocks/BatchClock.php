@@ -4,8 +4,6 @@ namespace EdgeTelemetrics\EventCorrelation\Clocks;
 
 use DateTimeImmutable;
 use Psr\Clock\ClockInterface;
-use React\EventLoop\Loop;
-use React\EventLoop\LoopInterface;
 
 class BatchClock implements ClockInterface {
 
