@@ -14,6 +14,7 @@ use EdgeTelemetrics\EventCorrelation\Tests\Rules\TimeoutRule;
 use Exception;
 use Generator;
 use PHPUnit\Framework\TestCase;
+use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
 use function sys_get_temp_dir;
 use function tempnam;
@@ -47,10 +48,18 @@ class RuleTest extends TestCase {
 
         $wasCalled = false;
         $closure = function($vars) use (&$wasCalled, $scheduler) {
-            $wasCalled = true;
             /** @var $this InvokableClassAction */
             $this->logger->info(json_encode($vars));
-            $scheduler->shutdown();
+
+            if ($wasCalled) {
+                throw new Exception('We should only be called once');
+            } else {
+                $wasCalled = true;
+
+                Loop::futureTick(function () use ($scheduler) {
+                    $scheduler->shutdown();
+                });
+            }
         };
 
         $scheduler->register_action('recordTimeout', $closure);
