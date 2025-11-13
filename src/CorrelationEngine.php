@@ -174,8 +174,6 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
         /** Record that we have seen an event of this type */
         $this->incrStat('seen', (string)$event->event);
 
-        $this->logger?->debug('Handling ' . json_encode($event));
-
         if ($this->eventstream_live) {
             /**
              * If the event stream is live, we want to make sure the event timestamp is within
