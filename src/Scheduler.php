@@ -336,6 +336,10 @@ class Scheduler implements LoggerAwareInterface {
         $cmd->on('data', function(Event $event) {
             $this->handleEvent($event);
         });
+        $cmd->on('checkpoint', function($checkpoint) use($id) {
+            $this->input_processes_checkpoints[$id] = $checkpoint;
+            $this->dirty = true;
+        });
         $cmd->on('error', function(Throwable $error) use ($id) {
             $this->logger->error("{id}", ['id'=> $id, 'exception' => $error,]);
         });

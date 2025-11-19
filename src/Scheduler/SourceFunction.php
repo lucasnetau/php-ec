@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
+use EdgeTelemetrics\EventCorrelation\Event;
 use Evenement\EventEmitterInterface;
 use Evenement\EventEmitterTrait;
 use Psr\Log\LoggerAwareInterface;
@@ -55,6 +56,15 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
 
     public function isStopped() : bool {
         return !$this->running;
+    }
+
+    //Emit the checkpoint data to the scheduler
+    public function checkpoint($checkpoint) : void {
+        $this->emit('checkpoint', [$checkpoint]);
+    }
+
+    public function emitEvent(Event $event) {
+        $this->emit('data', [$event]);
     }
 
     abstract function functionStart() : void;
