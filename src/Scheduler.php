@@ -361,8 +361,9 @@ class Scheduler implements LoggerAwareInterface {
                 $this->shutdown();
             }
         });
-        $this->loop->futureTick(static function() use ($cmd, $env) {
-            $cmd->start($env);
+        $checkpoint = $this->input_processes_checkpoints[$id] ?? null;
+        $this->loop->futureTick(static function() use ($cmd, $env, $checkpoint) {
+            $cmd->start($env, $checkpoint);
         });
         return $cmd;
     }

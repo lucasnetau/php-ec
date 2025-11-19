@@ -18,7 +18,7 @@ class GeneratorSource extends SourceFunction {
         }
     }
 
-    public function functionStart(): void {
+    public function functionStart(mixed $checkpoint): void {
         $this->loop->futureTick($this->tick(...));
     }
 
@@ -26,7 +26,7 @@ class GeneratorSource extends SourceFunction {
         if ($this->generator->valid()) {
             $event = $this->generator->current();
             if ($event instanceof Event) {
-                $this->emit('data', [$event]);
+                $this->emitEvent($event);
             }
 
             $this->timer = $this->loop->addTimer($this->delay, function() {

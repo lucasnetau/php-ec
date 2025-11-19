@@ -18,6 +18,9 @@ use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerAwareTrait;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
+use RuntimeException;
+use function func_num_args;
+use function getenv;
 
 abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInterface
 {
@@ -30,7 +33,7 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
     protected LoopInterface $loop;
 
     /** @var array The environment for this source function */
-    protected array $env;
+    private array $env;
 
     public function __construct() {
         $this->loop = Loop::get();
@@ -39,11 +42,11 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
     /**
      * @var null|array $env Set the environment for the source function or inherit if null
      */
-    public function start(null|array $env = null): void
+    public function start(null|array $env = null, mixed $checkpoint = null): void
     {
         $this->running = true;
         $this->env = $env ?? getenv();
-        $this->functionStart();
+        $this->functionStart($checkpoint);
     }
 
     public function terminate($signal): void
@@ -58,6 +61,23 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
         return !$this->running;
     }
 
+    protected function env(string $variableName, ?string $defaultValue = null): ?string
+    {
+        // Only mark as optional if the default value was *explicitly* provided.
+        $isOptional = (2 === func_num_args());
+
+        $env = $this->env[$variableName] ?? false;
+        if ( false === $env ) {
+            if ( true === $isOptional ) {
+                $env = $defaultValue;
+            } else {
+                throw new RuntimeException("Non-Optional ENV variable $variableName not set" );
+            }
+        }
+
+        return $env;
+    }
+
     //Emit the checkpoint data to the scheduler
     public function checkpoint($checkpoint) : void {
         $this->emit('checkpoint', [$checkpoint]);
@@ -67,7 +87,7 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
         $this->emit('data', [$event]);
     }
 
-    abstract function functionStart() : void;
+    abstract function functionStart(mixed $checkpoint) : void;
 
     abstract function functionStop() : void;
 
