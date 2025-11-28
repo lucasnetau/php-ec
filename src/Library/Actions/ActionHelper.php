@@ -76,14 +76,15 @@ class ActionHelper extends EventEmitter {
         //Open our own handle to stdin and stdout instead of using STDIN/STDOUT so that when the Stream reader/writes close they don't close STDOUT/STDIN
         $this->input = new Decoder(new ReadableResourceStream(fopen('php://stdin', 'r')), $buffer_size);
         $this->output = new Encoder(new WritableResourceStream(fopen('php://stdout', 'w')));
-        $this->logger = new JsonRpcLogger(LogLevel::DEBUG, new WritableResourceStream(fopen('php://stdout', 'w')));
+        $this->logger = new JsonRpcLogger(LogLevel::DEBUG, $this->output);
 
-        $this->input->on('error', function($exception) use ($buffer_size) {
+        $this->input->on('error', function(\Throwable $exception) use ($buffer_size) {
             if ($exception instanceof \OverflowException) {
                 $this->logger->critical("RPC Request was greater than configured buffer size $buffer_size");
             } else {
                 $this->logger->critical('Unexpected exception on STDIN', ['exception' => $exception]);
             }
+            $this->exitCode = 1;
             $this->stop();
         });
 
