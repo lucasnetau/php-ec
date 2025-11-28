@@ -8,11 +8,14 @@ use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
 use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use Evenement\EventEmitterTrait;
+use JsonException;
 use Psr\Log\LoggerInterface;
 use React\ChildProcess\Process;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
 use RuntimeException;
+use Throwable;
+use function base64_encode;
 use function bin2hex;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
 use function dirname;
@@ -20,6 +23,8 @@ use function error_get_last;
 use function file_exists;
 use function file_get_contents;
 use function file_put_contents;
+use function gzdecode;
+use function gzencode;
 use function hrtime;
 use function json_decode;
 use function json_encode;
@@ -29,6 +34,7 @@ use function random_bytes;
 use function realpath;
 use function rename;
 use function round;
+use function str_starts_with;
 use function strlen;
 use function tempnam;
 use function trim;
@@ -58,6 +64,8 @@ class FileAdapter implements SaveHandlerInterface {
 
     protected bool $asyncFaulty = false;
 
+    const COMPRESSION_LEVEL = 2;
+
     public function __construct( protected string $saveFileName, protected LoggerInterface $logger, protected ?LoopInterface $loop ) {
         $this->loop ??= Loop::get();
     }
@@ -82,6 +90,10 @@ class FileAdapter implements SaveHandlerInterface {
             $this->process = new Process(php_cmd(realpath(__DIR__ . '/../../bin/save_state.php'), true),
                 dirname($this->saveFileName), ['SAVESTATE_FILENAME' => $this->saveFileName]);
             $this->process->start($this->loop);
+
+            $this->process->on('error', function(Throwable $error) {
+                $this->logger->critical('SaveHelper Error', ['exception' => $error]);
+            });
 
             $this->process->on('exit', function () {
                 if ($this->asyncSaveInProgress) {
@@ -132,9 +144,10 @@ class FileAdapter implements SaveHandlerInterface {
 
             $this->logger->debug('Initialised save handler process');
         }
-        $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
-        if ($state === false) {
-            $this->emit('save:failed', ['exception' => new RuntimeException("Encoding application state failed. " . json_last_error_msg())] );
+        try {
+            $state = base64_encode(gzencode(json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR), self::COMPRESSION_LEVEL));
+        } catch (JsonException $ex) {
+            $this->emit('save:failed', ['exception' => $ex] );
             return;
         }
 
@@ -156,9 +169,9 @@ class FileAdapter implements SaveHandlerInterface {
             $this->emit('save:failed', ['exception' => new RuntimeException("Error creating temporary save state file, check filesystem")] );
             return;
         }
-        $state = json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        $state = gzencode(json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION | JSON_PARTIAL_OUTPUT_ON_ERROR), self::COMPRESSION_LEVEL);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            $this->logger->warning('Error encoding application state');
+            $this->logger->warning('Error encoding application state: ' . json_last_error_msg());
         }
         if ($state === false) {
             $this->emit('save:failed', ['exception' => new RuntimeException("Encoding application state failed. " . json_last_error_msg())] );
@@ -203,9 +216,15 @@ class FileAdapter implements SaveHandlerInterface {
             if ($contents === false || $contents === '') {
                 throw new RuntimeException('State file exists but contents could not be read or were empty. Exiting');
             }
-            $state = json_decode($contents, true);
-            if ($state === null) {
-                throw new RuntimeException('Save state file was corrupted, Exiting. JSON Error: ' . json_last_error_msg() );
+            try {
+                if (str_starts_with($contents, "\x1f\x8b")) { //GZIP header
+                    $state = json_decode(gzdecode($contents) ?: json_encode(null), true, flags: JSON_THROW_ON_ERROR);
+                } else {
+                    $state = json_decode($contents, true, flags: JSON_THROW_ON_ERROR);
+                }
+            } catch (JsonException $exception) {
+                $this->logger->critical("Save state file was corrupted", ['exception' => $exception]);
+                throw new RuntimeException('Save state file was corrupted, Exiting.');
             }
             return $state;
         }
