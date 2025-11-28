@@ -177,4 +177,12 @@ class JsonRpcLogger extends AbstractLogger
             str_replace("\n", ", ", $exception->getTraceAsString())
         )));
     }
+
+    public function __destruct() {
+        if ($this->stream instanceof WritableStreamInterface) {
+            $this->stream->end();
+        } else {
+            fclose($this->stream);
+        }
+    }
 }
