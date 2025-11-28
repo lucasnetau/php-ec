@@ -33,24 +33,32 @@ new class($filename) {
         $this->loop = Loop::get();
 
         $this->processWrap->on(ActionHelper::ACTION_EXECUTE, function(JsonRpcRequest $request) use ($directory) {
-            $state = $request->getParam('state');
-            $filename = tempnam($directory, ".php-ce.state.tmp"); //Create the temporary file in the same directory as the final destination to ensure rename is on same filesystem
-            if (false === $filename) {
-                $this->returnError($request, "Error creating temporary save state file, check filesystem and permissions");
-                return;
-            }
-            $saveStateSize = strlen($state);
-            if (!(@file_put_contents($filename, $state) === $saveStateSize && rename($filename, $this->saveFileName))) {
-                if (file_exists($filename) && !unlink($filename)) {
-                    $this->processWrap->log(LogLevel::WARNING, 'Unable to delete temporary save file');
+            try {
+                $state = base64_decode($request->getParam('state'));
+                if ($state === false) {
+                    throw new RuntimeException('Could not base64 decode state');
                 }
-                $this->returnError($request, "Save state sync failed." . json_encode(error_get_last()));
-                return;
+                $filename = tempnam($directory,
+                    ".php-ce.state.tmp"); //Create the temporary file in the same directory as the final destination to ensure rename is on same filesystem
+                if (false === $filename) {
+                    throw new RuntimeException("Error creating temporary save state file, check filesystem and permissions");
+                }
+                $saveStateSize = strlen($state);
+                if (!(@file_put_contents($filename, $state) === $saveStateSize && rename($filename,
+                        $this->saveFileName))) {
+                    if (file_exists($filename) && !unlink($filename)) {
+                        $this->processWrap->log(LogLevel::WARNING, 'Unable to delete temporary save file');
+                    }
+                    throw new RuntimeException("Save state sync failed." . json_encode(error_get_last()));
+                }
+                $this->processWrap->write(new JsonRpcResponse($request->getId(), [
+                    'saveStateBeginTime' => $request->getParam('time'),
+                    'saveStateSizeBytes' => $saveStateSize,
+                ]));
+            } catch (Throwable $ex) {
+                $this->processWrap->log(LogLevel::CRITICAL, 'Save state sync failed.', ['exception' => $ex]);
+                $this->returnError($request, "Save state sync failed." . json_encode($ex->getMessage()));
             }
-            $this->processWrap->write(new JsonRpcResponse($request->getId(), [
-                'saveStateBeginTime' => $request->getParam('time'),
-                'saveStateSizeBytes' => $saveStateSize,
-            ]));
         });
 
         $this->processWrap->on(ActionHelper::ACTION_SHUTDOWN, function() {
