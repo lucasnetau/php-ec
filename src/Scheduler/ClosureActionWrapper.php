@@ -63,7 +63,7 @@ class ClosureActionWrapper implements LoggerAwareInterface {
      * @return bool
      * @throws ReflectionException
      */
-    private function isBindable(Closure $callable)
+    private function isBindable(Closure $callable): bool
     {
         $bindable = false;
 
