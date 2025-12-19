@@ -328,9 +328,11 @@ class Scheduler implements LoggerAwareInterface {
     protected function setup_source_function(int|string $id): SourceFunction
     {
         $config = $this->input_processes_config[$id];
+        /** @var SourceFunction $cmd */
         $cmd = is_string($config['cmd']) ? new $config['cmd']() : clone $config['cmd'];
         $env = $config['env'];
 
+        $cmd->setLogger($this->logger);
         $this->input_processes[$id] = $cmd;
         /** Log any errors received. Wrapper will call exit after error */
         $cmd->on('data', function(Event $event) {
@@ -693,7 +695,7 @@ class Scheduler implements LoggerAwareInterface {
             if (is_callable($config['cmd'])) {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
                 $cmd($action->getVars())->then(function() use($actionName, $action, $cmd) {
-                    /** Accounting? */
+                    /** @TODO: Accounting? */
                 })->catch(function($exception) use($action, $actionName, $cmd) {
                     $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
                     $error = [

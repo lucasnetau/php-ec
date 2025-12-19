@@ -34,7 +34,7 @@ class GeneratorSource extends SourceFunction {
                     $this->generator->next();
                     $this->tick();
                 } catch (\Throwable $e) {
-                    $this->logger->critical('Generator threw exception', ['exception' => $e]);
+                    $this->logger?->critical('Generator threw exception', ['exception' => $e]);
                 }
             });
         } else {
