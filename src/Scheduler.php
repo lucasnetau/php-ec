@@ -20,6 +20,7 @@ use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\JSON_RPC\Error;
+use JsonSchema\Constraints\Constraint;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
@@ -49,6 +50,7 @@ use function gettype;
 use function hrtime;
 use function in_array;
 use function is_array;
+use function is_object;
 use function is_string;
 use function is_subclass_of;
 use function max;
@@ -546,10 +548,11 @@ class Scheduler implements LoggerAwareInterface {
      * @param string|null $wd
      * @param bool|null $singleShot
      * @param array $env
+     * @param object|array|null $schema Validate action's parameters with a JSONSchema object (json_decode output)
      */
-    public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = []) : void
+    public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [], object|array|null $schema = null) : void
     {
-        $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot];
+        $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot, 'schema' => $schema];
     }
 
     /**
@@ -695,6 +698,25 @@ class Scheduler implements LoggerAwareInterface {
         $actionName = $action->getCmd();
         if (isset($this->actionConfig[$actionName])) {
             $config = $this->actionConfig[$actionName];
+
+            //Validate the parameters before calling
+            if ($config['schema']) {
+                $params = (object)$action->getVars();
+                $validator = new \JsonSchema\Validator;
+                if ($validator->validate($params, $config['schema'], Constraint::CHECK_MODE_VALIDATE_SCHEMA) !== \JsonSchema\Validator::ERROR_NONE) {
+                    $this->logger->error("Invalid parameters for action $actionName", ['errors' => $validator->getErrors()]);
+                    $error = [
+                        'error' => [
+                            'code' => Error::INVALID_PARAMS,
+                            'message' => "Invalid parameters for action $actionName",
+                        ],
+                        'action' => $action,
+                    ];
+                    $this->erroredActionCommands[] = $error;
+                    return;
+                }
+            }
+
             if (is_callable($config['cmd'])) {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
                 $cmd($action->getVars())->then(function() use($actionName, $action, $cmd) {

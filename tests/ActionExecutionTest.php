@@ -10,7 +10,6 @@ use PHPUnit\Framework\TestCase;
 use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
 use function count;
-use function error_log;
 use function sys_get_temp_dir;
 use function tempnam;
 use function unlink;
@@ -147,7 +146,7 @@ class ActionExecutionTest extends TestCase {
 
         $erroredActions = $scheduler->getErroredActions();
         $this->assertCount(1, $erroredActions);
-        $this->assertEquals('closureAction threw',  $erroredActions[0]['error']);
+        $this->assertEquals('closureAction threw',  $erroredActions[0]['error']['message']);
     }
 
     /** @small */
@@ -175,13 +174,47 @@ class ActionExecutionTest extends TestCase {
 
         $this->assertEquals(State::STOPPED, $scheduler->getExecutionState()->state());
 
-        $logger->assert()
-            ->hasLog()
-             ->withMessageStartsWith('RuntimeException: Exception test case in ');
-
         $erroredActions = $scheduler->getErroredActions();
 
         $this->assertCount(1, $erroredActions);
-        $this->assertEquals('Action process terminated unexpectedly with code: 1',  $erroredActions[0]['error']);
+        $this->assertEquals('Action process terminated unexpectedly with code: 1',  $erroredActions[0]['error']['message']);
+
+        $logger->assert()
+            ->hasLog()
+             ->withMessageStartsWith('RuntimeException: Exception test case in ');
+    }
+
+    public function testActionSchemaValidation(): void {
+        $scheduler = $this->buildObservableScheduler();
+
+        $logger = new TestLogger();
+        $scheduler->setLogger($logger);
+
+        $wasCalled = 0;
+        $closure = function($params) use (&$wasCalled) {
+            $wasCalled++;
+        };
+
+        $scheduler->register_action('closureAction', $closure, schema: [
+            "type" => "object",
+            "properties" => [
+                "test" => [
+                    "type" => "boolean",
+                ],
+            ],
+            "required" => ["test"],
+            "additionalProperties" => false,
+        ]);
+
+        Loop::get()->futureTick(function() use ($scheduler) {
+            $scheduler->queueAction(new Action('closureAction', ['test' => true,]));
+            $scheduler->queueAction(new Action('closureAction', ['test' => "test",])); //Invalid
+            $scheduler->queueAction(new Action('closureAction', ['abc' => true,]));
+            $scheduler->shutdown();
+        });
+
+        $scheduler->run();
+
+        $this->assertEquals(1, $wasCalled, 'Validation did not pass');
     }
 }
