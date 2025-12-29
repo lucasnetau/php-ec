@@ -19,6 +19,7 @@ use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
+use EdgeTelemetrics\JSON_RPC\Error;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
@@ -649,7 +650,9 @@ class Scheduler implements LoggerAwareInterface {
                         $terminatedMessage =  "Action process terminated unexpectedly " . (($term === null) ? "with code: $code" : "on signal: $term");
                         foreach($terminatedActions as $rpcId => $action) {
                             $error = [
-                                'error' => $terminatedMessage,
+                                'error' => [
+                                    "message" => $terminatedMessage,
+                                ],
                                 'action' => $action['action'],
                             ];
                             $this->erroredActionCommands[] = $error;
@@ -696,10 +699,13 @@ class Scheduler implements LoggerAwareInterface {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
                 $cmd($action->getVars())->then(function() use($actionName, $action, $cmd) {
                     /** @TODO: Accounting? */
-                })->catch(function($exception) use($action, $actionName, $cmd) {
+                })->catch(function(Throwable $exception) use($action, $actionName, $cmd) {
                     $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
                     $error = [
-                        'error' => $exception->getMessage(),
+                        'error' => [
+                            'code' => $exception->getCode(),
+                            'message' => $exception->getMessage(),
+                        ],
                         'action' => $action,
                     ];
                     $this->erroredActionCommands[] = $error;
@@ -721,7 +727,10 @@ class Scheduler implements LoggerAwareInterface {
         } else {
             $this->logger->error("Action $actionName is not defined");
             $this->erroredActionCommands[] = [
-                'error' => "Unable to start undefined action $actionName",
+                'error' => [
+                    "code" => 1,
+                    "message" => "Unable to start undefined action $actionName"
+                ],
                 'action' => $action,
             ];
         }
@@ -919,6 +928,13 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->notice('Beginning failed action recovery process');
             $this->state = new State(State::RECOVERY);
             foreach($erroredActions as $errored) {
+                if (is_array($errored['error'])) {
+                    $code = $errored['error']['code'] ?? 0;
+                    if ($code < 0 && $code !== Error::INTERNAL_ERROR) {
+                        $this->logger?->debug("Action request with non-retryable error code", ["cmd" => $errored['action']['cmd'], "params" => $errored['action']['vars']]);
+                        continue;
+                    }
+                }
                 $action = new Action($errored['action']['cmd'], $errored['action']['vars']);
                 $this->engine->emit('action', [$action]);
             }
@@ -1126,7 +1142,10 @@ class Scheduler implements LoggerAwareInterface {
             while(count($state['actions']['inflight'])) {
                 $inflight = array_shift($state['actions']['inflight']);
                 $this->erroredActionCommands[] = [
-                    'error' => 'Inflight when process exited',
+                    'error' => [
+                        'code' => 2,
+                        'message' => 'Inflight when process exited',
+                    ],
                     'action' => $inflight,
                 ];
             }
