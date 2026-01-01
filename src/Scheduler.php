@@ -719,18 +719,20 @@ class Scheduler implements LoggerAwareInterface {
 
             if (is_callable($config['cmd'])) {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
-                $cmd($action->getVars())->then(function() use($actionName, $action, $cmd) {
-                    /** @TODO: Accounting? */
-                })->catch(function(Throwable $exception) use($action, $actionName, $cmd) {
-                    $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
-                    $error = [
-                        'error' => [
-                            'code' => $exception->getCode(),
-                            'message' => $exception->getMessage(),
-                        ],
-                        'action' => $action,
-                    ];
-                    $this->erroredActionCommands[] = $error;
+                $this->loop->futureTick(function() use ($cmd, $action, $actionName) {
+                    $cmd($action->getVars())->then(function () use ($actionName, $action, $cmd) {
+                        /** @TODO: Accounting? */
+                    })->catch(function (Throwable $exception) use ($action, $actionName, $cmd) {
+                        $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
+                        $error = [
+                            'error' => [
+                                'code' => $exception->getCode(),
+                                'message' => $exception->getMessage(),
+                            ],
+                            'action' => $action,
+                        ];
+                        $this->erroredActionCommands[] = $error;
+                    });
                 });
             } else {
                 $process = $this->start_action($actionName);
