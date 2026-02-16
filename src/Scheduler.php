@@ -542,9 +542,9 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->info("Started action process $actionName");
         });
 
-        $ec->on('action.error', function($actionName, $error) {
+        $ec->on('action.error', function($action, $error) {
             if ($this->state->state() === State::RECOVERY) {
-                $this->logger->critical("Action $actionName failed again during recovery", ['error' => $error]);
+                $this->logger->critical("Action {$action->getCmd()} failed again during recovery", ['error' => $error]);
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });

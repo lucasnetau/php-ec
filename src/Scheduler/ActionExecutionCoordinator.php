@@ -108,6 +108,8 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 if ($rpc instanceof JsonRpcResponse) {
                     if ($rpc->isSuccess()) {
                         /** Once the action has been processed successfully we can discard of our copy of it */
+                        $action = $this->inflightActionCommands[$rpc->getId()];
+                        $action->emit('completed', []);
                         unset($this->inflightActionCommands[$rpc->getId()]);
                     } else {
                         /** Transfer the action from the running queue to the errored queue
@@ -122,11 +124,12 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                                 'action' => $this->inflightActionCommands[$rpc->getId()]['action'],
                             ];
                             $this->erroredActionCommands[] = $error;
+                            $this->emit('action.error', ['action' => $error['action'], 'error' => $rpc->getError()->getMessage()]);
+                            $action = $this->inflightActionCommands[$rpc->getId()];
+                            $action->emit('failed', ['error' => $rpc->getError()->getMessage()]);
                             unset($this->inflightActionCommands[$rpc->getId()]);
                         }
                         $this->logger->error($rpc->getError()->getMessage() . " : " . json_encode($rpc->getError()->getData()));
-
-                        $this->emit('action.error', ['actionName' => $actionName, 'error' => $rpc->getError()->getMessage()]);
                     }
                     /** Release memory used by the inflight action table */
                     if (empty($this->inflightActionCommands)) {
@@ -172,6 +175,14 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                                 'action' => $action['action'],
                             ];
                             $this->erroredActionCommands[] = $error;
+                            $this->emit('action.error', [
+                                'action' => $action['action'],
+                                'error' => [
+                                    'code' => $code ?? -1,
+                                    'message' => $terminatedMessage,
+                                ],
+                            ]);
+                            $action['action']->emit('failed', ['error' => $terminatedMessage]);
                             unset($this->inflightActionCommands[$rpcId]);
                         }
                     }
@@ -187,8 +198,6 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     $this->runningActions = [];
 
                     $this->emit('action.running.idle', ['errorCount' => count($this->erroredActionCommands)]);
-
-
                 }
                 $this->emit('dirty');
             });
@@ -230,8 +239,10 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
                 Loop::get()->futureTick(function() use ($cmd, $action, $actionName) {
                     //@TODO, we should be adding these to a processing queue (WeakMap?) to be able to cancel them on shutdown
+                    $action->emit('started');
                     $cmd($action->getVars())->then(function ($result) use ($actionName, $action, $cmd) {
-                        $this->logger?->info('Process Output', ['result' => $result]);
+                        $this->logger?->debug('Process Output', ['result' => $result]);
+                        $action->emit('completed', []);
                         /** @TODO: Accounting? */
                     })->catch(function (Throwable $exception) use ($action, $actionName, $cmd) {
                         $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
@@ -243,6 +254,14 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                             'action' => $action,
                         ];
                         $this->erroredActionCommands[] = $error;
+                        $this->emit('action.error', [
+                            'action' => $action,
+                            'error' => [
+                                'code' => $exception->getCode(),
+                                'message' => $exception->getMessage(),
+                            ],
+                        ]);
+                        $action->emit('failed', ['error' => $exception->getMessage()]);
                     });
                 });
             } else {
@@ -258,6 +277,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 ];
                 $this->emit('dirty');
                 $process->stdin->write(json_encode($rpc_request) . "\n");
+                $action->emit('started');
             }
         } else {
             $this->logger->error("Action $actionName is not defined");
