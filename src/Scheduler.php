@@ -560,6 +560,14 @@ class Scheduler implements LoggerAwareInterface {
             }
         });
 
+        $ec->on('actionexecutioncoordinator.idle', function(int $errorCount) {
+            if ($this->state->isStopping() && count($this->input_processes) === 0) {
+                $this->logger->debug('All processes have stopped');
+                /** If we are shutting down and all input and action processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
+                $this->exit();
+            }
+        });
+
 
     }
 
@@ -778,14 +786,6 @@ class Scheduler implements LoggerAwareInterface {
                     $this->initialise_input_processes();
                 }
             });
-
-            $this->actionExecutionCoordinator->once('action.running.idle', function(int $errorCount) {
-                if ($this->state->isStopping() && count($this->input_processes) === 0) {
-                    $this->logger->debug('All processes have stopped');
-                    /** If we are shutting down and all input and action processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
-                    $this->exit();
-                }
-            });
         } else {
             $this->initialise_input_processes();
         }
@@ -878,7 +878,7 @@ class Scheduler implements LoggerAwareInterface {
     protected function shutdown_phase2() : void
     {
         $this->state->transition(State::STOPPING);
-        if (null !== $this->shutdownTimer) {
+        if ($this->shutdownTimer) {
             $this->loop->cancelTimer($this->shutdownTimer);
             $this->shutdownTimer = null;
         }
@@ -889,19 +889,21 @@ class Scheduler implements LoggerAwareInterface {
         $this->handleEvent(new Event(['event' => static::CONTROL_MSG_STOP]));
 
         /** Check if we have any running action commands, if we do then some actions may not have completed and/or need to flush+complete tasks. Send them a SIGTERM to complete their shutdown */
-        if ($this->actionExecutionCoordinator->runningActionCount() > 0) {
+        if ($this->actionExecutionCoordinator->isIdle()) {
+            $this->exit();
+        } else {
             $this->logger->debug("Shutting down running action processes");
             $this->actionExecutionCoordinator->shutdown();
 
             $this->loop->futureTick(function() {
                 //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
-                $this->shutdownTimer = $this->loop->addTimer(10.0, function () {
-                    $this->logger->warning("Action processes did not shutdown within the timeout delay...", ['actions' => $this->actionExecutionCoordinator->runningActionNames()]);
+                $this->shutdownTimer = $this->loop->addTimer(20.0, function () {
+                    //if (!$this->actionExecutionCoordinator->isIdle()) {
+                        $this->logger->warning("Action processes did not shutdown within the timeout delay...");
+                    //}
                     $this->exit();
                 });
             });
-        } else {
-            $this->exit();
         }
     }
 
@@ -909,7 +911,7 @@ class Scheduler implements LoggerAwareInterface {
      * Stop the Loop and sync state to disk
      */
     public function exit() : void {
-        if (null !== $this->shutdownTimer) {
+        if ($this->shutdownTimer) {
             $this->loop->cancelTimer($this->shutdownTimer);
             $this->shutdownTimer = null;
         }
@@ -918,7 +920,10 @@ class Scheduler implements LoggerAwareInterface {
             if ($this->actionExecutionCoordinator->isIdle()) {
                 $this->state->transition(State::STOPPED);
             } else {
-                $this->logger->error("There were still inflight action commands at shutdown.", ['inflight' => $this->actionExecutionCoordinator->getInflightActionCommands()]);
+                $this->logger->error("There were still inflight action commands at shutdown.", [
+                    'inflight' => $this->actionExecutionCoordinator->getInflightActionCommands(),
+                    'closures' => $this->actionExecutionCoordinator->getInflightActionClosures(),
+                ]);
                 $this->state->transition(State::STOPPED_UNCLEAN);
             }
             $this->logger->debug("Event Loop stopped");
