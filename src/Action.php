@@ -11,13 +11,16 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use Evenement\EventEmitterInterface;
 use JsonSerializable;
 
 /**
  * Class Action
  * @package EdgeTelemetrics\EventCorrelation
  */
-class Action implements JsonSerializable {
+class Action implements JsonSerializable, EventEmitterInterface {
+
+    use \Evenement\EventEmitterTrait;
 
     /**
      * @var string
