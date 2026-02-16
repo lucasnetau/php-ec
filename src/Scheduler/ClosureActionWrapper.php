@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
+use React\EventLoop\Loop;
 use React\Promise\Promise;
 use ReflectionException;
 use ReflectionFunction;
@@ -40,18 +41,29 @@ class ClosureActionWrapper implements LoggerAwareInterface {
     public function __invoke(array $args): Promise
     {
         $resolver = function (callable $resolve, callable $reject) use ($args) {
-            try {
-                $resolve(($this->closure)($args));
-            } catch (\Throwable $e) {
-                $reject(new RuntimeException($e->getMessage(), $e->getCode(), $e));
-            }
+            Loop::futureTick(function() use ($resolve, $reject, $args) {
+                try {
+                    $result = ($this->closure)($args);
+                    if ($result instanceof Promise) {
+                        $result->then(function ($result) use ($resolve) {
+                            $resolve($result);
+                        })->catch(function (\Throwable $e) use ($reject) {
+                            $reject($e);
+                        });
+                    } else {
+                        $resolve($result);
+                    }
+                } catch (\Throwable $e) {
+                    $reject(new RuntimeException($e->getMessage(), $e->getCode(), $e));
+                }
+            });
         };
 
         $canceller = function () {
             // Cancel/abort any running operations like network connections, streams etc.
 
             // Reject promise by throwing an exception
-            throw new RuntimeException('Promise cancelled');
+            throw new RuntimeException('Action closure cancelled');
         };
 
         return new Promise($resolver, $canceller);
