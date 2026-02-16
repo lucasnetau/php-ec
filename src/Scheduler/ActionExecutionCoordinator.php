@@ -24,6 +24,7 @@ use Psr\Log\LoggerAwareTrait;
 use Psr\Log\LogLevel;
 use React\ChildProcess\Process;
 use React\EventLoop\Loop;
+use React\Promise\Promise;
 use Throwable;
 use function array_filter;
 use function array_key_exists;
@@ -58,11 +59,17 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
      */
     protected array $inflightActionCommands = [];
 
+    protected \WeakMap $inflightActionClosures;
+
     /**
      * @var array
      */
     protected array $erroredActionCommands = [];
 
+
+    public function __construct() {
+        $this->inflightActionClosures = new \WeakMap();
+    }
 
     /**
      * @param string $name
@@ -126,7 +133,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                             $this->erroredActionCommands[] = $error;
                             $this->emit('action.error', ['action' => $error['action'], 'error' => $rpc->getError()->getMessage()]);
                             $action = $this->inflightActionCommands[$rpc->getId()];
-                            $action->emit('failed', ['error' => $rpc->getError()->getMessage()]);
+                            $action->emit('failed', ['exception' => new \RuntimeException($rpc->getError()->getMessage())]);
                             unset($this->inflightActionCommands[$rpc->getId()]);
                         }
                         $this->logger->error($rpc->getError()->getMessage() . " : " . json_encode($rpc->getError()->getData()));
@@ -167,6 +174,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     {
                         $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
                         $terminatedMessage =  "Action process terminated unexpectedly " . (($term === null) ? "with code: $code" : "on signal: $term");
+                        $terminatedException = new \RuntimeException($terminatedMessage);
                         foreach($terminatedActions as $rpcId => $action) {
                             $error = [
                                 'error' => [
@@ -182,7 +190,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                                     'message' => $terminatedMessage,
                                 ],
                             ]);
-                            $action['action']->emit('failed', ['error' => $terminatedMessage]);
+                            $action['action']->emit('failed', ['exception' => $terminatedException]);
                             unset($this->inflightActionCommands[$rpcId]);
                         }
                     }
@@ -190,15 +198,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     $this->emit('process.error', ['actionName' => $actionName, 'error' => $terminatedMessage ?? 'Unknown pid']);
                 }
                 unset($this->runningActions[$actionName]);
-                if (count($this->runningActions) === 0) {
-                    /**
-                     * The runningActions queue array can grow large, using a lot of memory,
-                     * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
-                     */
-                    $this->runningActions = [];
-
-                    $this->emit('action.running.idle', ['errorCount' => count($this->erroredActionCommands)]);
-                }
+                $this->checkIdle();
                 $this->emit('dirty');
             });
 
@@ -237,32 +237,38 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
 
             if (is_callable($config['cmd'])) {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
-                Loop::get()->futureTick(function() use ($cmd, $action, $actionName) {
-                    //@TODO, we should be adding these to a processing queue (WeakMap?) to be able to cancel them on shutdown
-                    $action->emit('started');
-                    $cmd($action->getVars())->then(function ($result) use ($actionName, $action, $cmd) {
-                        $this->logger?->debug('Process Output', ['result' => $result]);
-                        $action->emit('completed', []);
-                        /** @TODO: Accounting? */
-                    })->catch(function (Throwable $exception) use ($action, $actionName, $cmd) {
-                        $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
-                        $error = [
-                            'error' => [
-                                'code' => $exception->getCode(),
-                                'message' => $exception->getMessage(),
-                            ],
-                            'action' => $action,
-                        ];
-                        $this->erroredActionCommands[] = $error;
-                        $this->emit('action.error', [
-                            'action' => $action,
-                            'error' => [
-                                'code' => $exception->getCode(),
-                                'message' => $exception->getMessage(),
-                            ],
-                        ]);
-                        $action->emit('failed', ['error' => $exception->getMessage()]);
-                    });
+                $action->emit('started');
+                $promise = $cmd($action->getVars());
+                $this->inflightActionClosures[$promise] = $action->getVars(); //Keep track of promises so we can cancel on shutdown
+                $promise->then(function ($result) use ($actionName, $action, $cmd, $promise) {
+                    $this->inflightActionClosures->offsetUnset($promise);
+                    $this->logger?->debug('Process Output', ['result' => $result]);
+                    $action->emit('completed', []);
+                    Loop::futureTick($this->checkIdle(...));
+                    /** @TODO: Accounting? */
+                })->catch(function (Throwable $exception) use ($action, $actionName, $cmd, $promise) {
+                    $this->inflightActionClosures->offsetUnset($promise);
+                    $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
+                    foreach($this->inflightActionClosures as $closure => $vars) {
+                        echo json_encode($vars) . PHP_EOL;
+                    }
+                    $error = [
+                        'error' => [
+                            'code' => $exception->getCode(),
+                            'message' => $exception->getMessage(),
+                        ],
+                        'action' => $action,
+                    ];
+                    $this->erroredActionCommands[] = $error;
+                    $this->emit('action.error', [
+                        'action' => $action,
+                        'error' => [
+                            'code' => $exception->getCode(),
+                            'message' => $exception->getMessage(),
+                        ],
+                    ]);
+                    $action->emit('failed', ['exception' => $exception]);
+                    Loop::futureTick($this->checkIdle(...));
                 });
             } else {
                 $process = $this->start_action($actionName);
@@ -291,8 +297,31 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
         }
     }
 
+    private function checkIdle() : void {
+        /**
+         * The runningActions queue array can grow large, using a lot of memory,
+         * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
+         */
+        echo 'checking idle' . PHP_EOL;
+        if (count($this->runningActions) === 0) {
+            $this->runningActions = [];
+            echo 'no running actions' . PHP_EOL;
+
+            if ($this->inflightActionClosures->count() === 0) {
+                echo 'no running closures' . PHP_EOL;
+                $this->emit('actionexecutioncoordinator.idle', ['errorCount' => count($this->erroredActionCommands)]);
+            } else {
+                echo 'running closures' . PHP_EOL;
+                foreach($this->inflightActionClosures as $closure => $vars) {
+                    echo json_encode($vars) . PHP_EOL;
+                }
+                echo '.' . PHP_EOL;
+            }
+        }
+    }
+
     public function isIdle() : bool {
-        return count($this->inflightActionCommands) === 0;
+        return count($this->inflightActionCommands) === 0 && $this->inflightActionClosures->count() === 0;
     }
 
     public function inflightActionCount() : int {
@@ -301,6 +330,14 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
 
     public function getInflightActionCommands() : array {
         return $this->inflightActionCommands;
+    }
+
+    public function getInflightActionClosures() : array {
+        $res = [];
+        foreach($this->inflightActionClosures as $closure => $vars) {
+            $res[] = $vars;
+        }
+        return $res;
     }
 
     public function getErroredActionCommands() : array {
@@ -339,6 +376,12 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 }
             }
         });
-    }
 
+        Loop::addTimer(10, function() {
+            foreach ($this->inflightActionClosures as $promise => $_) {
+                /** @var Promise $promise */
+                $promise->cancel();
+            }
+        });
+    }
 }
