@@ -302,20 +302,10 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
          * The runningActions queue array can grow large, using a lot of memory,
          * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
          */
-        echo 'checking idle' . PHP_EOL;
         if (count($this->runningActions) === 0) {
             $this->runningActions = [];
-            echo 'no running actions' . PHP_EOL;
-
             if ($this->inflightActionClosures->count() === 0) {
-                echo 'no running closures' . PHP_EOL;
                 $this->emit('actionexecutioncoordinator.idle', ['errorCount' => count($this->erroredActionCommands)]);
-            } else {
-                echo 'running closures' . PHP_EOL;
-                foreach($this->inflightActionClosures as $closure => $vars) {
-                    echo json_encode($vars) . PHP_EOL;
-                }
-                echo '.' . PHP_EOL;
             }
         }
     }
