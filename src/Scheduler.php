@@ -14,13 +14,12 @@ namespace EdgeTelemetrics\EventCorrelation;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
-use EdgeTelemetrics\EventCorrelation\Scheduler\ClosureActionWrapper;
+use EdgeTelemetrics\EventCorrelation\Scheduler\ActionExecutionCoordinator;
 use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\JSON_RPC\Error;
-use JsonSchema\Constraints\Constraint;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
@@ -30,14 +29,10 @@ use React\EventLoop\LoopInterface;
 use React\ChildProcess\Process;
 use React\EventLoop\TimerInterface;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
-use EdgeTelemetrics\JSON_RPC\Request as JsonRpcRequest;
-use EdgeTelemetrics\JSON_RPC\Response as JsonRpcResponse;
 use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 use RuntimeException;
 
 use Throwable;
-use function array_filter;
-use function array_key_exists;
 use function array_keys;
 use function array_map;
 use function array_pop;
@@ -50,7 +45,6 @@ use function gettype;
 use function hrtime;
 use function in_array;
 use function is_array;
-use function is_object;
 use function is_string;
 use function is_subclass_of;
 use function max;
@@ -84,7 +78,7 @@ class Scheduler implements LoggerAwareInterface {
     protected float $schedulerStartTime;
 
     /** @var State The current state of the scheduler */
-    protected State $state;
+    protected readonly State $state;
 
     /**
      * @var LoopInterface
@@ -117,24 +111,9 @@ class Scheduler implements LoggerAwareInterface {
     protected array $input_processes_checkpoints = [];
 
     /**
-     * @var Process[] Process table to keep track of all action processes that are running.
+     * Keep track of Action execution
      */
-    protected array $runningActions = [];
-
-    /**
-     * @var array Configuration for actions
-     */
-    protected array $actionConfig = [];
-
-    /**
-     * @var array
-     */
-    protected array $inflightActionCommands = [];
-
-    /**
-     * @var array
-     */
-    protected array $erroredActionCommands = [];
+    protected ActionExecutionCoordinator $actionExecutionCoordinator;
 
     /**
      * @var TimerInterface[] Scheduled tasks for the scheduler
@@ -262,6 +241,7 @@ class Scheduler implements LoggerAwareInterface {
     public function setLogger(LoggerInterface $logger): void {
         $this->logger = $logger;
         $this->engine->setLogger($logger);
+        $this->actionExecutionCoordinator->setLogger($logger);
     }
 
     /**
@@ -275,7 +255,12 @@ class Scheduler implements LoggerAwareInterface {
         $this->rules = $rules;
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
+        $this->initialiseActionExecution();
         $this->setLogger(new NullLogger());
+
+        $this->state->on('scheduler.state.transition', function($new, $old) {
+           $this->logger->info("Schedule state transitioning from $old to $new");
+        });
     }
 
     /**
@@ -316,7 +301,7 @@ class Scheduler implements LoggerAwareInterface {
                 }
             }
         }
-        $this->state = new State(State::RUNNING);
+        $this->state->transition(State::RUNNING);
     }
 
     protected function initialise_input_process(int|string $id) : Process|SourceFunction {
@@ -542,222 +527,45 @@ class Scheduler implements LoggerAwareInterface {
         $this->newEventAction = $actionName;
     }
 
-    /**
-     * @param string $name
-     * @param string|array|callable $cmd
-     * @param string|null $wd
-     * @param bool|null $singleShot
-     * @param array $env
-     * @param object|array|null $schema Validate action's parameters with a JSONSchema object (json_decode output)
-     */
+    protected function handleAction(Action $action) : void {
+        $this->actionExecutionCoordinator->handleAction($action);
+    }
+
+    protected function initialiseActionExecution() : void {
+        $this->actionExecutionCoordinator = $ec = new ActionExecutionCoordinator();
+
+        $ec->on('dirty', function() {
+            $this->dirty = true;
+        });
+
+        $ec->on('process.start', function($actionName) {
+            $this->logger->info("Started action process $actionName");
+        });
+
+        $ec->on('action.error', function($actionName, $error) {
+            if ($this->state->state() === State::RECOVERY) {
+                $this->logger->critical("Action $actionName failed again during recovery", ['error' => $error]);
+                $this->loop->futureTick(function() {
+                    $this->shutdown();
+                });
+            }
+        });
+
+        $ec->on('process.error', function($actionName, $error) {
+            if ($this->state->state() === State::RECOVERY) {
+                $this->logger->critical("Action $actionName failed again during recovery", ['error' => $error]);
+                $this->loop->futureTick(function() {
+                    $this->shutdown();
+                });
+            }
+        });
+
+
+    }
+
     public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [], object|array|null $schema = null) : void
     {
-        $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot, 'schema' => $schema];
-    }
-
-    /**
-     * @param string $actionName
-     * @return Process
-     */
-    protected function start_action(string $actionName): Process
-    {
-        $actionConfig = $this->actionConfig[$actionName];
-        /** @TODO: Handle singleShot processes true === $actionConfig['singleShot'] treat as not running for accounting */
-        if (!isset($this->runningActions[$actionName])) {
-            /** If there is no running action then we initialise the process **/
-            if (is_string($actionConfig['cmd'])) {
-                /** we call exec to ensure actions can receive our signals and not the default bash wrapper */
-                $process = new Process('exec ' . $actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env'] ?? []);
-            } else {
-                /** When passed an array PHP will call command directly without going through a shell */
-                $process = new Process($actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env'] ?? []);
-            }
-            $process->start($this->loop);
-
-            $this->logger->info("Started action process $actionName");
-
-            $process->stderr->on('data', function ($data) use ($actionName) {
-                $this->logger->error("$actionName message: " . trim($data));
-            });
-
-            $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
-
-            /** Handler for the Json RPC response */
-            $process_decoded_stdout->on('data', function ($rpc) use ($actionName) {
-                if ($rpc instanceof JsonRpcResponse) {
-                    if ($rpc->isSuccess()) {
-                        /** Once the action has been processed successfully we can discard of our copy of it */
-                        unset($this->inflightActionCommands[$rpc->getId()]);
-                    } else {
-                        /** Transfer the action from the running queue to the errored queue
-                         * @TODO We need to watch this queue and handle any run-away errors (eg a database been unavailable to ingest events)
-                         * @TODO This should be put into a function as we call it both here and when an action terminates unexpectedly
-                         */
-                        if (!array_key_exists($rpc->getId(), $this->inflightActionCommands)) {
-                            $this->logger->error("Instance of $actionName has already been cleaned up or sent invalid id in response");
-                        } else {
-                            $error = [
-                                'error' => $rpc->getError(),
-                                'action' => $this->inflightActionCommands[$rpc->getId()]['action'],
-                            ];
-                            $this->erroredActionCommands[] = $error;
-                            unset($this->inflightActionCommands[$rpc->getId()]);
-                        }
-                        $this->logger->error($rpc->getError()->getMessage() . " : " . json_encode($rpc->getError()->getData()));
-
-                        if ($this->state->state() === State::RECOVERY) {
-                            $this->logger->critical('An action process failed again during recovery');
-                            $this->shutdown();
-                        }
-                    }
-                    /** Release memory used by the inflight action table */
-                    if (empty($this->inflightActionCommands)) {
-                        $this->inflightActionCommands = [];
-
-                        if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
-                            $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
-                            $this->state = new State(State::STARTING);
-                            $this->saveStateHandler->saveStateSync($this->buildState());
-                            $this->initialise_input_processes();
-                        }
-                    }
-                    $this->dirty = true;
-                } elseif ($rpc instanceof JsonRpcNotification) {
-                    if ($rpc->getMethod() === self::RPC_PROCESS_LOG) {
-                        //Log action expects logLevel to match \Psr\Log\LogLevel
-                        $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'), $rpc->getParam('context') ?? []);
-                    }
-                }
-            });
-
-            $process->on('exit', function ($code, $term) use ($actionName, $process) {
-                /** Action has terminated. If it successfully completed then it will have sent an ack on stdout first before exit */
-                if ($term === null) {
-                    $level = ($code === 0) ? LogLevel::INFO : LogLevel::ERROR;
-                    $this->logger->log($level, "Action {actionName} exited with code: {code}", ['actionName' => $actionName, 'code' => $code]);
-                } else {
-                    $this->logger->info("Action $actionName exited on signal: $term");
-                }
-                if ($code === 127) {
-                    $this->logger->critical("Action $actionName exit was due to Command Not Found");
-                } elseif ($code === 255) { //255 = PHP Fatal exit code
-                    $this->logger->critical("Action $actionName exit was due to fatal PHP error");
-                }
-                /** @TODO What happens if code === 0 with actions un-acked? Log message? */
-                if ($code !== 0) {
-                    /** Go through inflight actions and look for any that match our exiting with error action. Mark them as errored, otherwise they stay in the inflight action commands queue */
-                    $pid = $process->getPid();
-                    if (null !== $pid)
-                    {
-                        $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
-                        $terminatedMessage =  "Action process terminated unexpectedly " . (($term === null) ? "with code: $code" : "on signal: $term");
-                        foreach($terminatedActions as $rpcId => $action) {
-                            $error = [
-                                'error' => [
-                                    "message" => $terminatedMessage,
-                                ],
-                                'action' => $action['action'],
-                            ];
-                            $this->erroredActionCommands[] = $error;
-                            unset($this->inflightActionCommands[$rpcId]);
-                        }
-                    }
-
-                    if ($this->state->state() === State::RECOVERY) {
-                        $this->logger->critical('An action process failed again during recovery');
-                        $this->shutdown();
-                    }
-                }
-                unset($this->runningActions[$actionName]);
-                if (count($this->runningActions) === 0) {
-                    /**
-                     * The runningActions queue array can grow large, using a lot of memory,
-                     * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
-                     */
-                    $this->runningActions = [];
-
-                    if ($this->state->isStopping() && count($this->input_processes) === 0) {
-                        /** If we are shutting down and all input and action processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
-                        $this->exit();
-                    }
-                }
-                $this->dirty = true;
-            });
-
-            $this->runningActions[$actionName] = $process;
-            $this->dirty = true;
-            return $process;
-        }
-
-        return $this->runningActions[$actionName];
-    }
-
-    protected function handleAction(Action $action): void
-    {
-        //@TODO Implement queue to rate limit execution of actions
-        $actionName = $action->getCmd();
-        if (isset($this->actionConfig[$actionName])) {
-            $config = $this->actionConfig[$actionName];
-
-            //Validate the parameters before calling
-            if ($config['schema']) {
-                $params = (object)$action->getVars();
-                $validator = new \JsonSchema\Validator;
-                if ($validator->validate($params, $config['schema'], Constraint::CHECK_MODE_VALIDATE_SCHEMA) !== \JsonSchema\Validator::ERROR_NONE) {
-                    $this->logger->error("Invalid parameters for action $actionName", ['errors' => $validator->getErrors()]);
-                    $error = [
-                        'error' => [
-                            'code' => Error::INVALID_PARAMS,
-                            'message' => "Invalid parameters for action $actionName",
-                        ],
-                        'action' => $action,
-                    ];
-                    $this->erroredActionCommands[] = $error;
-                    return;
-                }
-            }
-
-            if (is_callable($config['cmd'])) {
-                $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
-                $this->loop->futureTick(function() use ($cmd, $action, $actionName) {
-                    $cmd($action->getVars())->then(function () use ($actionName, $action, $cmd) {
-                        /** @TODO: Accounting? */
-                    })->catch(function (Throwable $exception) use ($action, $actionName, $cmd) {
-                        $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
-                        $error = [
-                            'error' => [
-                                'code' => $exception->getCode(),
-                                'message' => $exception->getMessage(),
-                            ],
-                            'action' => $action,
-                        ];
-                        $this->erroredActionCommands[] = $error;
-                    });
-                });
-            } else {
-                $process = $this->start_action($actionName);
-                /** Once the process is up and running we then write out our data via it's STDIN, encoded as a JSON RPC call */
-                do {
-                    $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
-                } while (array_key_exists($uniqid, $this->inflightActionCommands));
-                $rpc_request = new JsonRpcRequest(self::ACTION_RUN_METHOD, $action->getVars(), $uniqid);
-                $this->inflightActionCommands[$uniqid] = [
-                    'action' => $action,
-                    'pid' => $process->getPid(),
-                ];
-                $this->dirty = true;
-                $process->stdin->write(json_encode($rpc_request) . "\n");
-            }
-        } else {
-            $this->logger->error("Action $actionName is not defined");
-            $this->erroredActionCommands[] = [
-                'error' => [
-                    "code" => 1,
-                    "message" => "Unable to start undefined action $actionName"
-                ],
-                'action' => $action,
-            ];
-        }
+        $this->actionExecutionCoordinator->register_action($name, $cmd, $wd, $singleShot, $env, $schema);
     }
 
     /**
@@ -945,12 +753,12 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         /** If we have any errored actions then we replay them and attempt recovery. In normal state we initialise the input processes */
-        if ($this->erroredActionCommands) {
-            //Take a copy of errored actions and reset the global state, function based actions will run straight away and may error again
-            $erroredActions = $this->erroredActionCommands;
-            $this->erroredActionCommands = [];
+        $erroredActions = $this->actionExecutionCoordinator->getErroredActionCommands();
+        if ($erroredActions) {
+            //Function based actions will run straight away and may error again (@TODO: Can we delay function based actions)
+            $this->actionExecutionCoordinator->clearErroredActionCommands();
             $this->logger->notice('Beginning failed action recovery process');
-            $this->state = new State(State::RECOVERY);
+            $this->state->transition(State::RECOVERY);
             foreach($erroredActions as $errored) {
                 if (is_array($errored['error'])) {
                     $code = $errored['error']['code'] ?? 0;
@@ -962,6 +770,22 @@ class Scheduler implements LoggerAwareInterface {
                 $action = new Action($errored['action']['cmd'], $errored['action']['vars']);
                 $this->engine->emit('action', [$action]);
             }
+            $this->actionExecutionCoordinator->once('action.inflight.idle', function(int $errorCount) {
+                if ($this->state->state() === State::RECOVERY && $errorCount === 0) {
+                    $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
+                    $this->state->transition(State::STARTING);
+                    $this->saveStateHandler->saveStateSync($this->buildState());
+                    $this->initialise_input_processes();
+                }
+            });
+
+            $this->actionExecutionCoordinator->once('action.running.idle', function(int $errorCount) {
+                if ($this->state->isStopping() && count($this->input_processes) === 0) {
+                    $this->logger->debug('All processes have stopped');
+                    /** If we are shutting down and all input and action processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
+                    $this->exit();
+                }
+            });
         } else {
             $this->initialise_input_processes();
         }
@@ -1012,7 +836,7 @@ class Scheduler implements LoggerAwareInterface {
         /** GO! */
         $this->loop->run();
         if ($this->state->state() === State::RUNNING) {
-            $this->state = new  State(State::STOPPED_UNCLEAN);
+            $this->state->transition(State::STOPPED_UNCLEAN);
         }
     }
 
@@ -1020,7 +844,7 @@ class Scheduler implements LoggerAwareInterface {
      * Initialise shutdown by stopping processes and timers
      */
     public function shutdown() : void {
-        $this->state = new State(State::STOPPING);
+        $this->state->transition(State::STOPPING);
         while ($task = array_pop($this->scheduledTasks)) {
             $this->loop->cancelTimer($task);
             $task = null;
@@ -1053,7 +877,7 @@ class Scheduler implements LoggerAwareInterface {
      */
     protected function shutdown_phase2() : void
     {
-        $this->state = new State(State::STOPPING);
+        $this->state->transition(State::STOPPING);
         if (null !== $this->shutdownTimer) {
             $this->loop->cancelTimer($this->shutdownTimer);
             $this->shutdownTimer = null;
@@ -1065,24 +889,14 @@ class Scheduler implements LoggerAwareInterface {
         $this->handleEvent(new Event(['event' => static::CONTROL_MSG_STOP]));
 
         /** Check if we have any running action commands, if we do then some actions may not have completed and/or need to flush+complete tasks. Send them a SIGTERM to complete their shutdown */
-        if (count($this->runningActions) > 0) {
-            foreach ($this->runningActions as $processKey => $process) {
-                /** End the stdin for the process to ensure we flush any pending actions */
-                $process->stdin->end();
-            }
+        if ($this->actionExecutionCoordinator->runningActionCount() > 0) {
+            $this->logger->debug("Shutting down running action processes");
+            $this->actionExecutionCoordinator->shutdown();
 
             $this->loop->futureTick(function() {
-                $this->logger->debug("Shutting down running action processes");
-                foreach ($this->runningActions as $processKey => $process) {
-                    $this->logger->debug( "Sending SIGTERM to action process $processKey");
-                    if (false === $process->terminate(SIGTERM)) {
-                        $this->logger->error("Unable to send SIGTERM to action process $processKey");
-                    }
-                }
-
                 //Set up a timer to forcefully stop the scheduler if all processes don't terminate in time
                 $this->shutdownTimer = $this->loop->addTimer(10.0, function () {
-                    $this->logger->warning("Action processes did not shutdown within the timeout delay...", ['actions' => array_keys($this->runningActions)]);
+                    $this->logger->warning("Action processes did not shutdown within the timeout delay...", ['actions' => $this->actionExecutionCoordinator->runningActionNames()]);
                     $this->exit();
                 });
             });
@@ -1101,11 +915,11 @@ class Scheduler implements LoggerAwareInterface {
         }
         $this->loop->futureTick(function() {
             $this->loop->stop();
-            if ($this->inflightActionCommands) {
-                $this->logger->error("There were still inflight action commands at shutdown.");
-                $this->state = new State(State::STOPPED_UNCLEAN);
+            if ($this->actionExecutionCoordinator->isIdle()) {
+                $this->state->transition(State::STOPPED);
             } else {
-                $this->state = new State(State::STOPPED);
+                $this->logger->error("There were still inflight action commands at shutdown.", ['inflight' => $this->actionExecutionCoordinator->getInflightActionCommands()]);
+                $this->state->transition(State::STOPPED_UNCLEAN);
             }
             $this->logger->debug("Event Loop stopped");
             if (isset($this->saveStateHandler)) {
@@ -1133,7 +947,7 @@ class Scheduler implements LoggerAwareInterface {
         $state['uptime_msec'] = (int)round((hrtime(true) - $this->schedulerStartTime)/1e+6);
         $state['input']['running'] = array_keys($this->input_processes);
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
-        $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->inflightActionCommands), 'errored' => $this->erroredActionCommands];
+        $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->actionExecutionCoordinator->getInflightActionCommands()), 'errored' => $this->actionExecutionCoordinator->getErroredActionCommands()];
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
@@ -1160,6 +974,7 @@ class Scheduler implements LoggerAwareInterface {
                 $this->logger->warning("Large number of failed actions. Memory consumption for state table may be large.");
             }
         }
+        /** @TODO: Fix up */
         if (true === static::PRESERVE_FAILED_EVENTS_ONLOAD) {
             $this->erroredActionCommands = $state['actions']['errored'];
             unset($state['actions']['errored']);
@@ -1209,11 +1024,11 @@ class Scheduler implements LoggerAwareInterface {
 
         if (false === $this->pausedOnMemoryPressure &&
                 ($percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK ||
-                count($this->inflightActionCommands) > static::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
+                    $this->actionExecutionCoordinator->inflightActionCount() > static::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
         )
         {
             $this->logger->warning(
-                "Currently using $percent_used% of memory limit with " . count($this->inflightActionCommands) . " inflight actions. Pausing input processes");
+                "Currently using $percent_used% of memory limit with {$this->actionExecutionCoordinator->inflightActionCount()} inflight actions. Pausing input processes");
 
             foreach($this->input_processes as $processId => $process)
             {
@@ -1225,10 +1040,10 @@ class Scheduler implements LoggerAwareInterface {
             $this->pausedOnMemoryPressure = true;
             ++$this->pausedOnMemoryPressureCount;
 
-            $inflightActionCount = count($this->inflightActionCommands);
+            $inflightActionCount = $this->actionExecutionCoordinator->inflightActionCount();
             /** @TODO take into account delaying shutdown if we still have some outstanding actions and memory usage is dropping */
             $this->scheduledTasks['pausedOnMemoryPressureTimer'] = $this->loop->addPeriodicTimer(300, function() use (&$inflightActionCount) {
-                $currentActionCount = count($this->inflightActionCommands);
+                $currentActionCount = $this->actionExecutionCoordinator->inflightActionCount();
                 if ($currentActionCount < $inflightActionCount) {
                     $this->logger->debug("Current action count dropped from {old} to {new}", ['old' => $inflightActionCount, 'new' => $currentActionCount]);;
                 }
@@ -1243,7 +1058,7 @@ class Scheduler implements LoggerAwareInterface {
         {
             if ($this->pausedOnMemoryPressure &&
                 $percent_used <= static::MEMORY_PRESSURE_LOW_WATERMARK &&
-                count($this->inflightActionCommands) < static::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
+                $this->actionExecutionCoordinator->inflightActionCount() < static::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
 
                 //Cancel the memory pressure timout
                 if ($this->scheduledTasks['pausedOnMemoryPressureTimer'] !== null) {

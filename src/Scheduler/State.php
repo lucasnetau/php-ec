@@ -13,7 +13,12 @@ namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
 //enum State implements \BackedEnum {
 
-class State {
+use Evenement\EventEmitterInterface;
+use function in_array;
+
+class State implements EventEmitterInterface {
+
+    use \Evenement\EventEmitterTrait;
 
     public const STARTING = 'starting';
     public const RECOVERY = 'recovery';
@@ -29,6 +34,19 @@ class State {
     private string $state;
 
     public function __construct(string $state) {
+        $this->setState($state);
+    }
+
+    public function transition(string $newState): void
+    {
+        if ($this->state !== $newState) {
+            $this->emit('scheduler.state.transition', [$newState, $this->state]);
+            $this->setState($newState);
+        }
+    }
+
+    public function setState(string $state): void
+    {
         if (in_array($state, self::VALID_STATES, true)) {
             $this->state = $state;
         } else {

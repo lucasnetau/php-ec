@@ -50,9 +50,11 @@ class ActionExecutionTest extends TestCase {
 
         $scheduler->register_action('closureAction', $closure);
 
-        Loop::get()->futureTick(function() use ($scheduler, $logger) {
+        Loop::futureTick(function() use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('closureAction', []));
-            $scheduler->shutdown();
+            Loop::futureTick(function() use ($scheduler, $logger) {
+                $scheduler->shutdown();
+            });
         });
 
         $scheduler->run();
@@ -83,9 +85,11 @@ class ActionExecutionTest extends TestCase {
 
         $scheduler->register_action('invokableClassAction', $invokableClass);
 
-        Loop::get()->futureTick(function() use ($scheduler, $logger) {
+        Loop::futureTick(function() use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('invokableClassAction', []));
-            $scheduler->shutdown();
+            Loop::futureTick(function() use ($scheduler, $logger) {
+                $scheduler->shutdown();
+            });
         });
 
         $scheduler->run();
@@ -110,9 +114,9 @@ class ActionExecutionTest extends TestCase {
         $scheduler->register_action('scriptAction',
             \EdgeTelemetrics\EventCorrelation\php_cmd(__DIR__ . '/scripts/Actions/logToScheduler.php'));
 
-        $scheduler->setHandleActionCallback(null, static function() use ($scheduler) { Loop::addTimer(0.2, $scheduler->shutdown(...)); });
+        $scheduler->setHandleActionCallback(null, static function() use ($scheduler) { Loop::addTimer(0.4, $scheduler->shutdown(...)); });
 
-        Loop::get()->futureTick(function () use ($scheduler, $logger) {
+        Loop::futureTick(function () use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('scriptAction', ['scriptAction ran and able to log']));
         });
 
@@ -135,9 +139,11 @@ class ActionExecutionTest extends TestCase {
 
         $scheduler->register_action('closureAction', $closure);
 
-        Loop::get()->futureTick(function() use ($scheduler, $logger) {
+        Loop::futureTick(function() use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('closureAction', []));
-            $scheduler->shutdown();
+            Loop::futureTick(function() use ($scheduler, $logger) {
+                $scheduler->shutdown();
+            });
         });
 
         $scheduler->run();
@@ -162,7 +168,7 @@ class ActionExecutionTest extends TestCase {
         Loop::futureTick(function () use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('scriptAction', []));
 
-            $shutdownTimer = Loop::addPeriodicTimer(0.01, function () use ($scheduler, $logger, &$shutdownTimer) {
+            $shutdownTimer = Loop::addPeriodicTimer(0.5, function () use ($scheduler, $logger, &$shutdownTimer) {
                 if (count($scheduler->getErroredActions()) > 0) {
                     Loop::cancelTimer($shutdownTimer);
                     $scheduler->exit();
@@ -190,9 +196,9 @@ class ActionExecutionTest extends TestCase {
         $logger = new TestLogger();
         $scheduler->setLogger($logger);
 
-        $wasCalled = 0;
+        $wasCalled = [];
         $closure = function($params) use (&$wasCalled) {
-            $wasCalled++;
+            $wasCalled[] = $params;
         };
 
         $scheduler->register_action('closureAction', $closure, schema: [
@@ -210,11 +216,13 @@ class ActionExecutionTest extends TestCase {
             $scheduler->queueAction(new Action('closureAction', ['test' => true,]));
             $scheduler->queueAction(new Action('closureAction', ['test' => "test",])); //Invalid
             $scheduler->queueAction(new Action('closureAction', ['abc' => true,]));
-            $scheduler->shutdown();
+            Loop::futureTick(function() use ($scheduler) {
+                $scheduler->shutdown();
+            });
         });
 
         $scheduler->run();
 
-        $this->assertEquals(1, $wasCalled, 'Validation did not pass');
+        $this->assertCount(1, $wasCalled, 'Validation did not pass');
     }
 }

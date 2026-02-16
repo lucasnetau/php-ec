@@ -65,7 +65,7 @@ class ObservableScheduler extends Scheduler {
     }
 
     public function getErroredActions() : array {
-        return $this->erroredActionCommands;
+        return $this->actionExecutionCoordinator->getErroredActionCommands();
     }
 
     public function getNextScheduledTimer() : DateTimeImmutable|null {
