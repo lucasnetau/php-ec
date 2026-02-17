@@ -61,12 +61,6 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
 
     protected \WeakMap $inflightActionClosures;
 
-    /**
-     * @var array
-     */
-    protected array $erroredActionCommands = [];
-
-
     public function __construct() {
         $this->inflightActionClosures = new \WeakMap();
     }
@@ -126,14 +120,10 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                         if (!array_key_exists($rpc->getId(), $this->inflightActionCommands)) {
                             $this->logger->error("Instance of $actionName has already been cleaned up or sent invalid id in response");
                         } else {
-                            $error = [
-                                'error' => $rpc->getError(),
-                                'action' => $this->inflightActionCommands[$rpc->getId()]['action'],
-                            ];
-                            $this->erroredActionCommands[] = $error;
-                            $this->emit('action.error', ['action' => $error['action'], 'error' => $rpc->getError()->getMessage()]);
-                            $action = $this->inflightActionCommands[$rpc->getId()];
-                            $action->emit('failed', ['exception' => new \RuntimeException($rpc->getError()->getMessage())]);
+                            $action = $this->inflightActionCommands[$rpc->getId()]['action'];
+                            $ex = new \RuntimeException($rpc->getError()->getMessage(), $rpc->getError()->getCode());
+                            $this->emit('action.failed', ['action' => $action, 'exception' => $ex]);
+                            $action->emit('failed', ['exception' => $ex, ]);
                             unset($this->inflightActionCommands[$rpc->getId()]);
                         }
                         $this->logger->error($rpc->getError()->getMessage() . " : " . json_encode($rpc->getError()->getData()));
@@ -142,7 +132,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     if (empty($this->inflightActionCommands)) {
                         $this->inflightActionCommands = [];
 
-                        $this->emit('action.inflight.idle', ['errorCount' => count($this->erroredActionCommands)]);
+                        $this->emit('action.inflight.idle', []);
                     }
                     $this->emit('dirty');
                 } elseif ($rpc instanceof JsonRpcNotification) {
@@ -174,23 +164,11 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     {
                         $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
                         $terminatedMessage =  "Action process terminated unexpectedly " . (($term === null) ? "with code: $code" : "on signal: $term");
-                        $terminatedException = new \RuntimeException($terminatedMessage);
+                        $terminatedException = new \RuntimeException($terminatedMessage, $code ?? -1);
                         foreach($terminatedActions as $rpcId => $action) {
-                            $error = [
-                                'error' => [
-                                    "message" => $terminatedMessage,
-                                ],
-                                'action' => $action['action'],
-                            ];
-                            $this->erroredActionCommands[] = $error;
-                            $this->emit('action.error', [
-                                'action' => $action['action'],
-                                'error' => [
-                                    'code' => $code ?? -1,
-                                    'message' => $terminatedMessage,
-                                ],
-                            ]);
-                            $action['action']->emit('failed', ['exception' => $terminatedException]);
+                            $action = $action['action'];
+                            $this->emit('action.failed', ['action' => $action, 'exception' => $terminatedException]);
+                            $action->emit('failed', ['exception' => $terminatedException]);
                             unset($this->inflightActionCommands[$rpcId]);
                         }
                     }
@@ -223,14 +201,8 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $validator = new \JsonSchema\Validator;
                 if ($validator->validate($params, $config['schema'], Constraint::CHECK_MODE_VALIDATE_SCHEMA) !== \JsonSchema\Validator::ERROR_NONE) {
                     $this->logger->error("Invalid parameters for action $actionName", ['errors' => $validator->getErrors()]);
-                    $error = [
-                        'error' => [
-                            'code' => Error::INVALID_PARAMS,
-                            'message' => "Invalid parameters for action $actionName",
-                        ],
-                        'action' => $action,
-                    ];
-                    $this->erroredActionCommands[] = $error;
+                    $ex = new \InvalidArgumentException("Invalid parameters for action $actionName", Error::INVALID_PARAMS);
+                    $this->emit('action.argumenterror', ['action' => $action, 'exception' => $ex]);
                     return;
                 }
             }
@@ -249,24 +221,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 })->catch(function (Throwable $exception) use ($action, $actionName, $cmd, $promise) {
                     $this->inflightActionClosures->offsetUnset($promise);
                     $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
-                    foreach($this->inflightActionClosures as $closure => $vars) {
-                        echo json_encode($vars) . PHP_EOL;
-                    }
-                    $error = [
-                        'error' => [
-                            'code' => $exception->getCode(),
-                            'message' => $exception->getMessage(),
-                        ],
-                        'action' => $action,
-                    ];
-                    $this->erroredActionCommands[] = $error;
-                    $this->emit('action.error', [
-                        'action' => $action,
-                        'error' => [
-                            'code' => $exception->getCode(),
-                            'message' => $exception->getMessage(),
-                        ],
-                    ]);
+                    $this->emit('action.failed', ['action' => $action, 'exception' => $exception]);
                     $action->emit('failed', ['exception' => $exception]);
                     Loop::futureTick($this->checkIdle(...));
                 });
@@ -286,14 +241,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $action->emit('started');
             }
         } else {
-            $this->logger->error("Action $actionName is not defined");
-            $this->erroredActionCommands[] = [
-                'error' => [
-                    "code" => 1,
-                    "message" => "Unable to start undefined action $actionName"
-                ],
-                'action' => $action,
-            ];
+            $this->emit('action.undefined', ['action' => $action]);
         }
     }
 
@@ -305,7 +253,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
         if (count($this->runningActions) === 0) {
             $this->runningActions = [];
             if ($this->inflightActionClosures->count() === 0) {
-                $this->emit('actionexecutioncoordinator.idle', ['errorCount' => count($this->erroredActionCommands)]);
+                $this->emit('idle');
             }
         }
     }
@@ -330,16 +278,12 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
         return $res;
     }
 
-    public function getErroredActionCommands() : array {
-        return $this->erroredActionCommands;
-    }
-
-    public function clearErroredActionCommands() : void {
-        $this->erroredActionCommands = [];
-    }
-
     public function runningActionCount() : int {
         return count($this->runningActions);
+    }
+
+    public function getConfig() : array {
+        return $this->actionConfig;
     }
 
     /**

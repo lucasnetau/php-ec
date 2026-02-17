@@ -116,6 +116,11 @@ class Scheduler implements LoggerAwareInterface {
     protected ActionExecutionCoordinator $actionExecutionCoordinator;
 
     /**
+     * @var array
+     */
+    protected array $erroredActionCommands = [];
+
+    /**
      * @var TimerInterface[] Scheduled tasks for the scheduler
      */
     protected array $scheduledTasks = [];
@@ -542,9 +547,18 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->info("Started action process $actionName");
         });
 
-        $ec->on('action.error', function($action, $error) {
+        $ec->on('action.failed', function($action, $exception) {
+            $error = [
+                'error' => [
+                    'code' => $exception->getCode(),
+                    'message' => $exception->getMessage(),
+                ],
+                'action' => $action,
+            ];
+            $this->erroredActionCommands[] = $error;
+
             if ($this->state->state() === State::RECOVERY) {
-                $this->logger->critical("Action {$action->getCmd()} failed again during recovery", ['error' => $error]);
+                $this->logger->critical("Action {$action->getCmd()} failed again during recovery", ['exception' => $exception]);
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });
@@ -560,7 +574,7 @@ class Scheduler implements LoggerAwareInterface {
             }
         });
 
-        $ec->on('actionexecutioncoordinator.idle', function(int $errorCount) {
+        $ec->on('idle', function() {
             if ($this->state->isStopping() && count($this->input_processes) === 0) {
                 $this->logger->debug('All processes have stopped');
                 /** If we are shutting down and all input and action processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
@@ -568,7 +582,30 @@ class Scheduler implements LoggerAwareInterface {
             }
         });
 
+        $ec->on('action.undefined', function($action) {
+            //@Note: Error not resolvable in current runtime
+            $this->logger->debug("Unknown action {$action->getCmd()}");
+            $error = [
+                'error' => [
+                    'code' => -1,
+                    'message' => "Action {$action->getCmd()} is undefined",
+                ],
+                'action' => $action,
+            ];
+            $this->erroredActionCommands[] = $error;
+        });
 
+        $ec->on('action.argumenterror', function($action, $exception) {
+            //@Note: Error not resolvable in current runtime
+            $error = [
+                'error' => [
+                    'code' => $exception->getCode(),
+                    'message' => $exception->getMessage(),
+                ],
+                'action' => $action,
+            ];
+            $this->erroredActionCommands[] = $error;
+        });
     }
 
     public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [], object|array|null $schema = null) : void
@@ -761,10 +798,10 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         /** If we have any errored actions then we replay them and attempt recovery. In normal state we initialise the input processes */
-        $erroredActions = $this->actionExecutionCoordinator->getErroredActionCommands();
+        $erroredActions = $this->erroredActionCommands;
         if ($erroredActions) {
             //Function based actions will run straight away and may error again (@TODO: Can we delay function based actions)
-            $this->actionExecutionCoordinator->clearErroredActionCommands();
+            $this->erroredActionCommands = [];
             $this->logger->notice('Beginning failed action recovery process');
             $this->state->transition(State::RECOVERY);
             foreach($erroredActions as $errored) {
@@ -778,8 +815,8 @@ class Scheduler implements LoggerAwareInterface {
                 $action = new Action($errored['action']['cmd'], $errored['action']['vars']);
                 $this->engine->emit('action', [$action]);
             }
-            $this->actionExecutionCoordinator->once('action.inflight.idle', function(int $errorCount) {
-                if ($this->state->state() === State::RECOVERY && $errorCount === 0) {
+            $this->actionExecutionCoordinator->once('idle', function() {
+                if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
                     $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
                     $this->state->transition(State::STARTING);
                     $this->saveStateHandler->saveStateSync($this->buildState());
@@ -952,7 +989,7 @@ class Scheduler implements LoggerAwareInterface {
         $state['uptime_msec'] = (int)round((hrtime(true) - $this->schedulerStartTime)/1e+6);
         $state['input']['running'] = array_keys($this->input_processes);
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
-        $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->actionExecutionCoordinator->getInflightActionCommands()), 'errored' => $this->actionExecutionCoordinator->getErroredActionCommands()];
+        $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->actionExecutionCoordinator->getInflightActionCommands()), 'errored' => $this->erroredActionCommands];
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
@@ -1121,7 +1158,7 @@ class Scheduler implements LoggerAwareInterface {
         return [
             'rules' => $this->rules,
             'input' => $this->input_processes_config,
-            'actions' => $this->actionConfig,
+            'actions' => $this->actionExecutionCoordinator->getConfig(),
         ];
     }
 }
