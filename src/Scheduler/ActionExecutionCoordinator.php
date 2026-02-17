@@ -111,6 +111,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                         /** Once the action has been processed successfully we can discard of our copy of it */
                         $action = $this->inflightActionCommands[$rpc->getId()];
                         $action->emit('completed', []);
+                        $this->emit('action.completed', ['action' => $action, ]);
                         unset($this->inflightActionCommands[$rpc->getId()]);
                     } else {
                         /** Transfer the action from the running queue to the errored queue
@@ -215,6 +216,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $promise->then(function ($result) use ($actionName, $action, $cmd, $promise) {
                     $this->inflightActionClosures->offsetUnset($promise);
                     $this->logger?->debug('Process Output', ['result' => $result]);
+                    $this->emit('action.completed', ['action' => $action, ]);
                     $action->emit('completed', []);
                     Loop::futureTick($this->checkIdle(...));
                     /** @TODO: Accounting? */
