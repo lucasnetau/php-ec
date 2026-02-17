@@ -20,8 +20,6 @@ use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\JSON_RPC\Error;
-use Evenement\EventEmitterInterface;
-use Evenement\EventEmitterTrait;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
