@@ -47,9 +47,9 @@ class RuleTest extends TestCase {
         $scheduler->setLogger($logger);
 
         $wasCalled = false;
-        $closure = function($vars) use (&$wasCalled, $scheduler) {
+        $closure = function($called) use (&$wasCalled, $scheduler) {
             /** @var $this InvokableClassAction */
-            $this->logger->info(json_encode($vars));
+            $this->logger->info(json_encode($called));
 
             if ($wasCalled) {
                 throw new Exception('We should only be called once');

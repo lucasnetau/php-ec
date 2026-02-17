@@ -197,8 +197,8 @@ class ActionExecutionTest extends TestCase {
         $scheduler->setLogger($logger);
 
         $wasCalled = [];
-        $closure = function($params) use (&$wasCalled) {
-            $wasCalled[] = $params;
+        $closure = function($test) use (&$wasCalled) {
+            $wasCalled[] = $test;
         };
 
         $scheduler->register_action('closureAction', $closure, schema: [

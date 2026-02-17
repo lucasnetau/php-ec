@@ -43,7 +43,7 @@ class ClosureActionWrapper implements LoggerAwareInterface {
         $resolver = function (callable $resolve, callable $reject) use ($args) {
             Loop::futureTick(function() use ($resolve, $reject, $args) {
                 try {
-                    $result = ($this->closure)($args);
+                    $result = ($this->closure)(...$args);
                     if ($result instanceof Promise) {
                         $result->then(function ($result) use ($resolve) {
                             $resolve($result);

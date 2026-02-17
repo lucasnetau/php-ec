@@ -23,7 +23,7 @@ class TimeoutRule extends Rule\MatchSingleContinuously {
     public function onTimeout() : void
     {
         $this->called[] = 'timeout called';
-        $action = new Action("recordTimeout", $this->called);
+        $action = new Action("recordTimeout", ['called' => $this->called]);
         $this->emit('data', [$action]);
     }
 }

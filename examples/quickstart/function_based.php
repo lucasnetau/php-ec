@@ -25,8 +25,8 @@ $rules = [
 $scheduler = new Scheduler($rules);
 $scheduler->setLogger(new StderrLogger(LogLevel::DEBUG));
 
-$scheduler->register_action('echo', function($vars) {
-    echo 'Next Value: ' . $vars['value'] . PHP_EOL;
+$scheduler->register_action('echo', function($value) {
+    echo 'Next Value: ' . $value . PHP_EOL;
 });
 
 function countToTen() : Generator {
