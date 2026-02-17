@@ -73,9 +73,7 @@ use const SIGHUP;
  * @package EdgeTelemetrics\EventCorrelation
  * @property LoggerInterface $logger
  */
-class Scheduler implements LoggerAwareInterface, EventEmitterInterface {
-    use EventEmitterTrait;
-
+class Scheduler implements LoggerAwareInterface {
     const CHECKPOINT_VARNAME = 'PHPEC_CHECKPOINT';
 
     /** @var float hrtime for when the scheduler is started */
@@ -542,18 +540,6 @@ class Scheduler implements LoggerAwareInterface, EventEmitterInterface {
 
     protected function initialiseActionExecution() : void {
         $this->actionExecutionCoordinator = $ec = new ActionExecutionCoordinator();
-
-        $ec->on('action.started', function ($action) {
-            $this->emit('action.started', ['action' => $action]);
-        });
-
-        $ec->on('action.completed', function ($action) {
-            $this->emit('action.completed', ['action' => $action]);
-        });
-
-        $ec->on('action.failed', function ($action, $exception) {
-            $this->emit('action.failed', ['action' => $action, 'exception' => $exception]);
-        });
 
         $ec->on('dirty', function() {
             $this->dirty = true;

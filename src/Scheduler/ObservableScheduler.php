@@ -16,8 +16,10 @@ use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Action;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
+use Evenement\EventEmitterInterface;
 
-class ObservableScheduler extends Scheduler {
+class ObservableScheduler extends Scheduler implements EventEmitterInterface {
+    use \Evenement\EventEmitterTrait;
 
     protected ?Closure $preEventHandlingCallback = null;
 
@@ -32,6 +34,18 @@ class ObservableScheduler extends Scheduler {
         if ($live) {
             $this->engine->setEventStreamLive();
         }
+
+        $this->actionExecutionCoordinator->on('action.started', function ($action) {
+            $this->emit('action.started', ['action' => $action]);
+        });
+
+        $this->actionExecutionCoordinator->on('action.completed', function ($action) {
+            $this->emit('action.completed', ['action' => $action]);
+        });
+
+        $this->actionExecutionCoordinator->on('action.failed', function ($action, $exception) {
+            $this->emit('action.failed', ['action' => $action, 'exception' => $exception]);
+        });
     }
 
     public function setRealtime(): void{
