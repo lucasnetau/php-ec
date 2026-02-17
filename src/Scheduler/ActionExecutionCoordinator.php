@@ -210,6 +210,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
 
             if (is_callable($config['cmd'])) {
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
+                $this->emit('action.started', ['action' => $action, ]);
                 $action->emit('started');
                 $promise = $cmd($action->getVars());
                 $this->inflightActionClosures[$promise] = $action->getVars(); //Keep track of promises so we can cancel on shutdown
@@ -240,6 +241,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 ];
                 $this->emit('dirty');
                 $process->stdin->write(json_encode($rpc_request) . "\n");
+                $this->emit('action.started', ['action' => $action, ]);
                 $action->emit('started');
             }
         } else {
