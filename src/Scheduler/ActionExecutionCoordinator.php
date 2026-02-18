@@ -109,9 +109,9 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 if ($rpc instanceof JsonRpcResponse) {
                     if ($rpc->isSuccess()) {
                         /** Once the action has been processed successfully we can discard of our copy of it */
-                        $action = $this->inflightActionCommands[$rpc->getId()];
-                        $action->emit('completed', []);
+                        $action = $this->inflightActionCommands[$rpc->getId()]['action'];
                         $this->emit('action.completed', ['action' => $action, ]);
+                        $action->emit('completed', []);
                         unset($this->inflightActionCommands[$rpc->getId()]);
                     } else {
                         /** Transfer the action from the running queue to the errored queue
