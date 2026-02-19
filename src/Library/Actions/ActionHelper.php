@@ -171,9 +171,18 @@ class ActionHelper extends EventEmitter {
      * Helper method to start the Event loop
      */
     public function run(bool $exitOnStop = false) : void {
-        $this->loop->run();
-        if ($exitOnStop) {
-            exit($this->exitCode);
+        try {
+            $this->loop->run();
+        } catch (\Throwable $t) {
+            if ($this->exitCode === 0) {
+                $this->exitCode = (int)$t->getCode() === 0 ? -1 : (int)$t->getCode();
+            }
+            $error_message = "Process terminating on uncaught exception. " . $t->getMessage() . "\n" . $t->getTraceAsString();
+            error_log($error_message);
+        } finally {
+            if ($exitOnStop) {
+                exit($this->exitCode);
+            }
         }
     }
 
