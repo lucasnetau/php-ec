@@ -157,23 +157,22 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 } elseif ($code === 255) { //255 = PHP Fatal exit code
                     $this->logger->critical("Action $actionName exit was due to fatal PHP error");
                 }
-                /** @TODO What happens if code === 0 with actions un-acked? Log message? */
-                if ($code !== 0) {
-                    /** Go through inflight actions and look for any that match our exiting with error action. Mark them as errored, otherwise they stay in the inflight action commands queue */
-                    $pid = $process->getPid();
-                    if (null !== $pid)
-                    {
-                        $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
-                        $terminatedMessage =  "Action process terminated unexpectedly " . (($term === null) ? "with code: $code" : "on signal: $term");
-                        $terminatedException = new \RuntimeException($terminatedMessage, $code ?? -1);
-                        foreach($terminatedActions as $rpcId => $action) {
-                            $action = $action['action'];
-                            $this->emit('action.failed', ['action' => $action, 'exception' => $terminatedException]);
-                            $action->emit('failed', ['exception' => $terminatedException]);
-                            unset($this->inflightActionCommands[$rpcId]);
-                        }
+                /** Go through inflight actions and look for any that match our exiting with error action. Mark them as errored, otherwise they stay in the inflight action commands queue */
+                $pid = $process->getPid();
+                if (null !== $pid)
+                {
+                    $terminatedActions = array_filter($this->inflightActionCommands, function($action) use ($pid) { return $pid === $action['pid']; } );
+                    $terminatedMessage =  "Action process terminated unexpectedly " . (($term === null) ? "with code: $code" : "on signal: $term");
+                    $terminatedException = new \RuntimeException($terminatedMessage, $code ?? -1);
+                    foreach($terminatedActions as $rpcId => $action) {
+                        $action = $action['action'];
+                        $this->emit('action.failed', ['action' => $action, 'exception' => $terminatedException]);
+                        $action->emit('failed', ['exception' => $terminatedException]);
+                        unset($this->inflightActionCommands[$rpcId]);
                     }
+                }
 
+                if ($code !== 0) {
                     $this->emit('process.error', ['actionName' => $actionName, 'error' => $terminatedMessage ?? 'Unknown pid']);
                 }
                 unset($this->runningActions[$actionName]);
