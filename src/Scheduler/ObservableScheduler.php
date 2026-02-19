@@ -17,6 +17,7 @@ use EdgeTelemetrics\EventCorrelation\Action;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use Evenement\EventEmitterInterface;
+use function error_log;
 
 class ObservableScheduler extends Scheduler implements EventEmitterInterface {
     use \Evenement\EventEmitterTrait;
@@ -34,6 +35,10 @@ class ObservableScheduler extends Scheduler implements EventEmitterInterface {
         if ($live) {
             $this->engine->setEventStreamLive();
         }
+
+        $this->state->on('scheduler.state.transition', function($new, $old) {
+           $this->emit($new);
+        });
 
         $this->actionExecutionCoordinator->on('action.started', function ($action) {
             $this->emit('action.started', ['action' => $action]);
