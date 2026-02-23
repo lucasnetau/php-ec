@@ -33,19 +33,20 @@ class State implements EventEmitterInterface {
 
     private string $state;
 
-    public function __construct(string $state) {
+    public function __construct(string $state = self::STARTING) {
         $this->setState($state);
     }
 
     public function transition(string $newState): void
     {
         if ($this->state !== $newState) {
-            $this->emit('scheduler.state.transition', [$newState, $this->state]);
+            $oldState = $this->state;
             $this->setState($newState);
+            $this->emit('scheduler.state.transition', [$newState, $oldState]);
         }
     }
 
-    public function setState(string $state): void
+    private function setState(string $state): void
     {
         if (in_array($state, self::VALID_STATES, true)) {
             $this->state = $state;
@@ -63,5 +64,9 @@ class State implements EventEmitterInterface {
             self::STOPPING => true,
             default => false
         };
+    }
+
+    public function __toString(): string {
+        return $this->state();
     }
 }
