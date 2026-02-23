@@ -16,6 +16,7 @@ use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ActionExecutionCoordinator;
 use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
+use EdgeTelemetrics\EventCorrelation\Scheduler\MetricsCollector;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
@@ -241,12 +242,18 @@ class Scheduler implements LoggerAwareInterface {
     protected ?LoggerInterface $logger = null;
 
     /**
+     * @var MetricsCollector
+     */
+    protected MetricsCollector $metricsCollector;
+
+    /**
      * Sets a logger.
      */
     public function setLogger(LoggerInterface $logger): void {
         $this->logger = $logger;
         $this->engine->setLogger($logger);
         $this->actionExecutionCoordinator->setLogger($logger);
+        $this->metricsCollector->setLogger($this->logger);
     }
 
     /**
@@ -261,6 +268,7 @@ class Scheduler implements LoggerAwareInterface {
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
         $this->initialiseActionExecution();
+        $this->metricsCollector = new MetricsCollector();
         $this->setLogger(new NullLogger());
 
         $this->state->on('scheduler.state.transition', function($new, $old) {
@@ -841,6 +849,18 @@ class Scheduler implements LoggerAwareInterface {
             $heartbeat->start($this->loop, $this->heartbeat_initialDelay);
         }
 
+        $this->loop->addPeriodicTimer(5, function() {
+            // Update metric for current memory usage (percentage)
+            $this->metricsCollector->set('memory', 'percent_used', $this->currentMemoryPercentUsed);
+            $this->metricsCollector->set('memory', 'total_used', memory_get_usage(true));
+
+            // Also expose the number of inflight actions
+            $this->metricsCollector->set('actions', 'inflight', $this->actionExecutionCoordinator->inflightActionCount());
+        });
+
+        //Log stats coming from the Correlation Engine
+        $this->engine->on('stat', $this->metricsCollector->set(...));
+
         /** Monitor memory usage */
         $sysInfo = new SysInfo();
         $this->memoryLimit = $sysInfo->getMemoryLimit();
@@ -1152,6 +1172,17 @@ class Scheduler implements LoggerAwareInterface {
             $this->managementServer = new Server($this);
             $this->logger->info("Management server listening on " . ($this->managementServer->getListeningAddress() ?? 'Unable to retrieve address'));
         }
+    }
+
+    /**
+     * @param int $interval
+     * @return void
+     * Enable logging of metrics to a PSR-3 logger
+     */
+    public function scheduleStatisticsLogging(int $interval): void
+    {
+        // Log metrics
+        $this->metricsCollector->schedulePeriodicLogging($this->loop, $interval);
     }
 
     public function getConfig() : array {
