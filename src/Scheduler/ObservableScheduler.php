@@ -116,4 +116,8 @@ class ObservableScheduler extends Scheduler implements EventEmitterInterface {
             ($this->postActionHandlingCallback)($action);
         }
     }
+
+    public function isDirty() : bool {
+        return $this->dirty || $this->engine->isDirty();
+    }
 }
