@@ -47,7 +47,6 @@ use function is_a;
 use function is_array;
 use function is_object;
 use function is_string;
-use function json_encode;
 use function round;
 use function spl_object_id;
 use function uasort;
@@ -768,6 +767,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
         if (!isset($this->statistics[$group])) { $this->statistics[$group] = []; }
         if (!isset($this->statistics[$group][$name])) { $this->statistics[$group][$name] = 0; }
         $this->statistics[$group][$name] += $incr;
+        $this->emit('stat', [$group, $name, $this->statistics[$group][$name]]);
     }
 
     /**
