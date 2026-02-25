@@ -190,6 +190,41 @@ class ActionExecutionTest extends TestCase {
              ->withMessageStartsWith('RuntimeException: Exception test case in ');
     }
 
+    /** @small */
+    public function testProcessTypeActionHelperThatExitsIncorrectlyOnErrorMarkedAsError(): void {
+        $scheduler = $this->buildObservableScheduler();
+
+        $logger = new TestLogger();
+        $scheduler->setLogger($logger);
+
+        $scheduler->register_action('scriptAction',
+            \EdgeTelemetrics\EventCorrelation\php_cmd(__DIR__ . '/scripts/Actions/incorrect_return_code.php'));
+
+        Loop::futureTick(function () use ($scheduler, $logger) {
+            $scheduler->queueAction(new Action('scriptAction', []));
+
+            $shutdownTimer = Loop::addPeriodicTimer(0.5, function () use ($scheduler, $logger, &$shutdownTimer) {
+                if (count($scheduler->getErroredActions()) > 0) {
+                    Loop::cancelTimer($shutdownTimer);
+                    $scheduler->exit();
+                }
+            });
+        });
+
+        $scheduler->run();
+
+        $this->assertEquals(State::STOPPED, $scheduler->getExecutionState()->state());
+
+        $erroredActions = $scheduler->getErroredActions();
+
+        $this->assertCount(1, $erroredActions);
+        $this->assertEquals('Action process terminated unexpectedly with code: 0',  $erroredActions[0]['error']['message']);
+
+        $logger->assert()
+            ->hasLog()
+            ->withMessageStartsWith('RuntimeException: Exception test case in ');
+    }
+
     public function testActionSchemaValidation(): void {
         $scheduler = $this->buildObservableScheduler();
 
