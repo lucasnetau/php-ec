@@ -172,7 +172,7 @@ class ActionHelper extends EventEmitter {
      * @param bool $exitOnStop Have the Process wrap exit with the exit code set once run completes
      * @return int Exit code of the Action Helper
      */
-    public function run(bool $exitOnStop = false) : int {
+    public function run(bool $exitOnStop = true) : int {
         try {
             $this->loop->run();
         } catch (\Throwable $t) {
