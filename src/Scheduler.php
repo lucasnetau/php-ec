@@ -812,6 +812,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->erroredActionCommands = [];
             $this->logger->notice('Beginning failed action recovery process');
             $this->state->transition(State::RECOVERY);
+            $anyRetryable = false;
             foreach($erroredActions as $errored) {
                 if (is_array($errored['error'])) {
                     $code = $errored['error']['code'] ?? 0;
@@ -822,15 +823,23 @@ class Scheduler implements LoggerAwareInterface {
                 }
                 $action = new Action($errored['action']['cmd'], $errored['action']['vars']);
                 $this->engine->emit('action', [$action]);
+                $anyRetryable = true;
             }
-            $this->actionExecutionCoordinator->once('idle', function() {
-                if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
-                    $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
-                    $this->state->transition(State::STARTING);
-                    $this->saveStateHandler->saveStateSync($this->buildState());
-                    $this->initialise_input_processes();
-                }
-            });
+            if ($anyRetryable) {
+                $this->actionExecutionCoordinator->once('idle', function () {
+                    if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
+                        $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
+                        $this->state->transition(State::STARTING);
+                        $this->saveStateHandler->saveStateSync($this->buildState());
+                        $this->initialise_input_processes();
+                    }
+                });
+            } else {
+                //No actions were retryable so we continue with booting the Scheduler
+                $this->state->transition(State::STARTING);
+                $this->saveStateHandler->saveStateSync($this->buildState());
+                $this->initialise_input_processes();
+            }
         } else {
             $this->initialise_input_processes();
         }
