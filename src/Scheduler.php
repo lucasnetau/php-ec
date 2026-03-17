@@ -567,6 +567,11 @@ class Scheduler implements LoggerAwareInterface {
 
             if ($this->state->state() === State::RECOVERY) {
                 $this->logger->critical("Action {$action->getCmd()} failed again during recovery", ['exception' => $exception]);
+            }
+        });
+
+        $ec->once('action.failed', function($action, $exception) {
+            if ($this->state->state() === State::RECOVERY) {
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });
@@ -576,6 +581,12 @@ class Scheduler implements LoggerAwareInterface {
         $ec->on('process.error', function($actionName, $error) {
             if ($this->state->state() === State::RECOVERY) {
                 $this->logger->critical("Action $actionName failed again during recovery", ['error' => $error]);
+            }
+        });
+
+        $ec->once('process.error', function($actionName, $error) {
+            //Only call shutdown once if we fail during recovery
+            if ($this->state->state() === State::RECOVERY) {
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });
