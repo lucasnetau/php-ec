@@ -129,12 +129,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                         }
                         $this->logger->error($rpc->getError()->getMessage() . " : " . json_encode($rpc->getError()->getData()));
                     }
-                    /** Release memory used by the inflight action table */
-                    if (empty($this->inflightActionCommands)) {
-                        $this->inflightActionCommands = [];
-
-                        $this->emit('action.inflight.idle', []);
-                    }
+                    $this->checkIdle();
                     $this->emit('dirty');
                 } elseif ($rpc instanceof JsonRpcNotification) {
                     if ($rpc->getMethod() === Scheduler::RPC_PROCESS_LOG) {
@@ -218,13 +213,13 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     $this->logger?->debug('Process Output', ['result' => $result]);
                     $this->emit('action.completed', ['action' => $action, ]);
                     $action->emit('completed', []);
-                    Loop::futureTick($this->checkIdle(...));
                     /** @TODO: Accounting? */
                 })->catch(function (Throwable $exception) use ($action, $actionName, $cmd, $promise) {
                     $this->inflightActionClosures->offsetUnset($promise);
                     $this->logger->critical('Callable Action ' . $actionName . ' threw.', ['exception' => $exception]);
                     $this->emit('action.failed', ['action' => $action, 'exception' => $exception]);
                     $action->emit('failed', ['exception' => $exception]);
+                })->finally(function() {
                     Loop::futureTick($this->checkIdle(...));
                 });
             } else {
@@ -250,11 +245,11 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
 
     private function checkIdle() : void {
         /**
-         * The runningActions queue array can grow large, using a lot of memory,
+         * The inflightActionCommands queue array can grow large, using a lot of memory,
          * once it empties we then re-initialise it so that PHP GC can release memory held by the previous array
          */
-        if (count($this->runningActions) === 0) {
-            $this->runningActions = [];
+        if (count($this->inflightActionCommands) === 0) {
+            $this->inflightActionCommands = [];
             if ($this->inflightActionClosures->count() === 0) {
                 $this->emit('idle');
             }

@@ -8,6 +8,9 @@ use EdgeTelemetrics\EventCorrelation\Scheduler\ObservableScheduler;
 use PHPUnit\Framework\TestCase;
 use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
+use function EdgeTelemetrics\EventCorrelation\php_cmd;
+use function error_log;
+use function json_encode;
 use function sys_get_temp_dir;
 use function tempnam;
 use function unlink;
@@ -59,16 +62,30 @@ class SchedulerRecoveryTests extends TestCase
         $logger = new TestLogger();
         $scheduler->setLogger($logger);
 
-        $action_run = 0;
-        $scheduler->register_action('recovery_job', function () use (&$action_run, $scheduler) {
+        $closure_action_run = 0;
+        $scheduler->register_action('closure_job', function () {
             $def = new \React\Promise\Deferred();
-            Loop::addTimer(2, static function () use ($def, &$action_run, $scheduler) {
-                $action_run++;
+            Loop::addTimer(2, static function () use ($def) {
                 $def->resolve("complete");
-                Loop::futureTick($scheduler->shutdown(...));
             });
             return $def->promise();
         });
+
+        $process_action_run = 0;
+        $scheduler->on('action.completed', function($action) use (&$process_action_run, &$closure_action_run) {
+            if ($action->getCmd() === 'process_job') {
+                $process_action_run++;
+            } elseif ($action->getCmd() === 'closure_job') {
+                $closure_action_run++;
+            }
+        });
+        $scheduler->register_action('process_job', php_cmd(__DIR__ . '/scripts/Actions/logToScheduler.php'));
+
+        $scheduler->on('running', function() use ($scheduler) {
+            Loop::futureTick($scheduler->shutdown(...));
+        });
+
+        Loop::addTimer(5, $scheduler->exit(...)); //Die after 5 seconds
 
         $event = null;
         $scheduler->setHandleEventCallback(static function ($received) use ($scheduler, &$event) {
@@ -109,10 +126,13 @@ class SchedulerRecoveryTests extends TestCase
     "actions": {
       "inflight": {
        "4594572349.3f59081b": {
-          "cmd": "recovery_job",
+          "cmd": "closure_job",
           "vars": {}
+        },
+       "212154.3f59081b": {
+          "cmd": "process_job",
+          "vars": {"a":123}
         }
-
       },
       "errored": []
     },
@@ -132,12 +152,13 @@ EOF;
 
         $scheduler->run();
 
-        $this->assertEquals(1, $action_run, "Inflight process not rerun on restore");
+       // error_log(json_encode($logger->getLogs(), JSON_PRETTY_PRINT));
+
+        $this->assertEquals(1, $closure_action_run, "Inflight Closure not rerun on restore");
+        $this->assertEquals(1, $process_action_run, "Inflight Process not rerun on restore");
 
         $this->assertNotNull($event);
         $this->assertEquals(Scheduler::CONTROL_MSG_RESTORED_STATE, $event->event);
-
-       // error_log(json_encode($logger->getLogs()));
 
         $this->assertEquals(['recovery','running','stopping','stopped'], $progress, "Schedule state transitions not expected");
     }
