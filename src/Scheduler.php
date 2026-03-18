@@ -823,7 +823,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->erroredActionCommands = [];
             $this->logger->notice('Beginning failed action recovery process');
             $this->state->transition(State::RECOVERY);
-            $anyRetryable = false;
+            $retryable = [];
             foreach($erroredActions as $errored) {
                 if (is_array($errored['error'])) {
                     $code = $errored['error']['code'] ?? 0;
@@ -832,11 +832,9 @@ class Scheduler implements LoggerAwareInterface {
                         continue;
                     }
                 }
-                $action = new Action($errored['action']['cmd'], $errored['action']['vars']);
-                $this->engine->emit('action', [$action]);
-                $anyRetryable = true;
+                $retryable[] = new Action($errored['action']['cmd'], $errored['action']['vars']);
             }
-            if ($anyRetryable) {
+            if ($retryable) {
                 $this->actionExecutionCoordinator->once('idle', function () {
                     if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
                         $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
@@ -845,6 +843,9 @@ class Scheduler implements LoggerAwareInterface {
                         $this->initialise_input_processes();
                     }
                 });
+                foreach($retryable as $action) {
+                    $this->engine->emit('action', [$action]);
+                }
             } else {
                 //No actions were retryable so we continue with booting the Scheduler
                 $this->state->transition(State::STARTING);
