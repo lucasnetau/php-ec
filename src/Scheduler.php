@@ -272,7 +272,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->setLogger(new NullLogger());
 
         $this->state->on('scheduler.state.transition', function($new, $old) {
-           $this->logger->info("Schedule state transitioning from $old to $new");
+           $this->logger->info("Scheduler state transitioning from $old to $new");
         });
     }
 

@@ -160,7 +160,7 @@ EOF;
         $this->assertNotNull($event);
         $this->assertEquals(Scheduler::CONTROL_MSG_RESTORED_STATE, $event->event);
 
-        $this->assertEquals(['recovery','running','stopping','stopped'], $progress, "Schedule state transitions not expected");
+        $this->assertEquals(['recovery','running','stopping','stopped'], $progress, "Scheduler state transitions not expected");
     }
 
 }
