@@ -514,7 +514,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
         }
 
         $timeouts = $this->getTimeouts();
-        if (!empty($timeouts)) {
+        if ($timeouts) {
             $nextTimeout = $timeouts[array_key_first($timeouts)];
             $now = $this->referenceClock->now();
             $difference = (float)$nextTimeout['timeout']->format('U.u') - (float)$now->format('U.u');
