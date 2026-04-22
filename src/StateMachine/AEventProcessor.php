@@ -22,6 +22,7 @@ use Exception;
 use RuntimeException;
 use function array_key_exists;
 use function count;
+use function function_exists;
 use function in_array;
 use function array_key_first;
 use function array_key_last;
@@ -250,6 +251,9 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @return Event|null
      */
     public function getFirstEvent() : ?Event {
+        if (function_exists('array_first')) {
+            return array_first($this->consumedEvents);
+        }
         return $this->consumedEvents[array_key_first($this->consumedEvents)] ?? null;
     }
 
@@ -258,6 +262,9 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @return Event|null
      */
     public function getLastEvent() : ?Event {
+        if (function_exists('array_last')) {
+            return array_last($this->consumedEvents);
+        }
         return $this->consumedEvents[array_key_last($this->consumedEvents)] ?? null;
     }
 
@@ -266,7 +273,8 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      * @param string $type
      * @return IEvent|IEvent[]|null
      */
-    public function getEventOfType(string $type) {
+    public function getEventOfType(string $type): array|IEvent|null
+    {
         $matched = [];
         foreach($this->consumedEvents as $event) {
             if ($event->getEventName() === $type) {
@@ -306,7 +314,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function firstEventDateTime(): ?DateTimeInterface
     {
-        return ($this->consumedEvents[array_key_first($this->consumedEvents)] ?? null)?->datetime;
+        return $this->getFirstEvent()?->datetime;
     }
 
     /**
@@ -315,7 +323,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
      */
     public function lastSeenEventDateTime(): ?DateTimeInterface
     {
-        return ($this->consumedEvents[array_key_last($this->consumedEvents)] ?? null)?->datetime;
+        return $this->getLastEvent()?->datetime;
     }
 
     /**
