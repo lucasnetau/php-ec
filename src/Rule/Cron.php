@@ -226,5 +226,9 @@ abstract class Cron extends Rule
         }
     }
 
+    public function getTimezone() : DateTimeZone {
+        return new DateTimeZone($this->cronTimezone);
+    }
+
     abstract public function onSchedule(?DateTimeImmutable $scheduledTime = null) : void;
 }
