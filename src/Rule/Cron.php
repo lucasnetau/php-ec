@@ -220,11 +220,11 @@ abstract class Cron extends Rule
     //Called when the timeout is reached
     public function alarm() : void {
         $this->cronLastRun = $this->getTimeout();
-        $this->onSchedule();
+        $this->onSchedule($this->cronLastRun);
         if (!$this->complete() && !$this->isTimedOut()) {
             $this->updateTimeout();
         }
     }
 
-    abstract public function onSchedule() : void;
+    abstract public function onSchedule(?DateTimeImmutable $scheduledTime = null) : void;
 }
