@@ -53,6 +53,8 @@ abstract class Cron extends Rule
     /** @var string The timezone that this rule runs in */
     const TIMEZONE = 'UTC';
 
+    const CATCHUP_MISSED_SCHEDULES = true;
+
     /**
      * @var Event Holds the initialising event for the rule (Engine Start or Restored)
      */
@@ -103,6 +105,9 @@ abstract class Cron extends Rule
                 $this->initEvent = $event;
                 $this->consumedEvents = [];
                 $this->updateTimeout(); //Call this here now that we have initialised initEvent
+                if ($event->event === Scheduler::CONTROL_MSG_RESTORED_STATE && static::CATCHUP_MISSED_SCHEDULES) {
+                    $this->catchUpMissedSchedules();
+                }
             }
             if ($event->event === Scheduler::CONTROL_MSG_STOP) {
                 $this->isTimedOut = true;
@@ -186,6 +191,16 @@ abstract class Cron extends Rule
         }
     }
 
+    protected function getTimeReferenceForCron() : DateTimeImmutable {
+        if (static::$eventstream_live) {
+            return new DateTimeImmutable('now');
+        } else {
+            $times = array_filter([$this->getLastEvent()?->datetime, $this->initEvent->datetime, $this->cronLastRun]);
+            /** @var DateTimeImmutable $currentTime */
+            return max($times);
+        }
+    }
+
     /**
      * @return void
      */
@@ -201,13 +216,7 @@ abstract class Cron extends Rule
         if (!isset($this->cron) || $this->complete()) {
             $this->timeout = null;
         } else {
-            if (static::$eventstream_live) {
-                $currentTime = 'now';
-            } else {
-                $times = array_filter([$this->getLastEvent()?->datetime, $this->initEvent->datetime, $this->cronLastRun]);
-                /** @var DateTimeImmutable $currentTime */
-                $currentTime = max($times);
-            }
+            $currentTime = $this->getTimeReferenceForCron();
             try {
                 $this->timeout = DateTimeImmutable::createFromMutable($this->cron->getNextRunDate($currentTime, 0, false, $this->cronTimezone));
             } catch (Exception) {
@@ -217,9 +226,48 @@ abstract class Cron extends Rule
         }
     }
 
+    protected function catchUpMissedSchedules() : void {
+        if (!isset($this->cron) || $this->complete() || $this->cronLastRun === null) {
+            return;
+        }
+
+        $now = $this->getTimeReferenceForCron();
+        if ($this->cronLastRun >= $now) {
+            return;
+        }
+
+        $current = $this->cronLastRun;
+
+        while (true) {
+            $nextRun = DateTimeImmutable::createFromMutable($this->cron->getNextRunDate($current, 0, false, $this->cronTimezone));
+
+            if ($nextRun > $now) {
+                break;
+            }
+
+            $this->cronLastRun = $nextRun;
+            $this->onSchedule($nextRun);
+            $current = $nextRun;
+        }
+
+        $this->updateTimeout();
+    }
+
+    public function serializeMetrics(): array {
+        return [
+            'cronLastRun' => $this->cronLastRun instanceof DateTimeInterface ? $this->cronLastRun->format('c') : date('c'), //Set to now if we have never run
+        ];
+    }
+
+    public function unserializeMetrics(array $metrics): void {
+        if (isset($metrics['cronLastRun'])) {
+            $this->cronLastRun = new DateTimeImmutable($metrics['cronLastRun']);
+        }
+    }
+
     //Called when the timeout is reached
     public function alarm() : void {
-        $this->cronLastRun = $this->getTimeout();
+        $this->cronLastRun = $this->getTimeout() ?? new DateTimeImmutable(); //Ensure we cannot be null
         $this->onSchedule($this->cronLastRun);
         if (!$this->complete() && !$this->isTimedOut()) {
             $this->updateTimeout();
@@ -230,5 +278,5 @@ abstract class Cron extends Rule
         return new DateTimeZone($this->cronTimezone);
     }
 
-    abstract public function onSchedule(?DateTimeImmutable $scheduledTime = null) : void;
+    abstract public function onSchedule(DateTimeImmutable $scheduledTime) : void;
 }
