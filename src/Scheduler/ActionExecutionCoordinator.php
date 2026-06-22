@@ -11,7 +11,10 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
+use Clue\React\Zlib\Compressor;
+use Clue\React\Zlib\Decompressor;
 use EdgeTelemetrics\EventCorrelation\Action;
+use EdgeTelemetrics\EventCorrelation\Library\Histogram;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\JSON_RPC\Error;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
@@ -36,7 +39,9 @@ use function is_string;
 use function json_encode;
 use function random_bytes;
 use function round;
+use function strlen;
 use function trim;
+use function gzencode;
 
 class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, LoggerAwareInterface
 {
@@ -60,6 +65,12 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
     protected array $inflightActionCommands = [];
 
     protected \WeakMap $inflightActionClosures;
+
+    /** @var array<string, array{uncompressed: Histogram, compressed: ?Histogram}> */
+    protected array $actionStdinPacketSizes = [];
+
+    /** @var array<string, array{uncompressed: Histogram, compressed: ?Histogram}> */
+    protected array $actionStdoutPacketSizes = [];
 
     public function __construct() {
         $this->inflightActionClosures = new \WeakMap();
@@ -98,14 +109,38 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
             $process->start(Loop::get());
             $this->emit('process.start', ['actionName' => $actionName]);
 
+            // GZIP compression for action I/O. GZIP frames are self-contained and better for streaming than raw DEFLATE.
+            $compress = ($actionConfig['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
+            if ($compress) {
+                $decompressor = new Decompressor(ZLIB_ENCODING_GZIP);
+                $process->stdout->pipe($decompressor);
+                $process->stdout = $decompressor;
+
+                $compressor = new Compressor(ZLIB_ENCODING_GZIP);
+                $compressor->pipe($process->stdin);
+                $process->stdin = $compressor;
+            }
+
             $process->stderr->on('data', function ($data) use ($actionName) {
                 $this->logger->error("$actionName message: " . trim($data));
             });
 
             $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
 
+            $this->actionStdoutPacketSizes[$actionName] = [
+                'uncompressed' => new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576),
+                'compressed' => $compress ? new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576) : null,
+            ];
+            $stdoutUncompressed = $this->actionStdoutPacketSizes[$actionName]['uncompressed'];
+            $stdoutCompressed = $this->actionStdoutPacketSizes[$actionName]['compressed'];
+
             /** Handler for the Json RPC response */
-            $process_decoded_stdout->on('data', function ($rpc) use ($actionName) {
+            $process_decoded_stdout->on('data', function ($rpc) use ($actionName, $stdoutUncompressed, $stdoutCompressed, $compress) {
+                $json = json_encode($rpc);
+                $stdoutUncompressed->add(strlen($json));
+                if ($compress && $stdoutCompressed) {
+                    $stdoutCompressed->add(strlen(gzencode($json)));
+                }
                 if ($rpc instanceof JsonRpcResponse) {
                     if ($rpc->isSuccess()) {
                         /** Once the action has been processed successfully we can discard of our copy of it */
@@ -234,7 +269,19 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     'pid' => $process->getPid(),
                 ];
                 $this->emit('dirty');
-                $process->stdin->write(json_encode($rpc_request) . "\n");
+                $json = json_encode($rpc_request) . "\n";
+                if (!isset($this->actionStdinPacketSizes[$actionName])) {
+                    $compress = ($this->actionConfig[$actionName]['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
+                    $this->actionStdinPacketSizes[$actionName] = [
+                        'uncompressed' => new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576),
+                        'compressed' => $compress ? new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576) : null,
+                    ];
+                }
+                $this->actionStdinPacketSizes[$actionName]['uncompressed']->add(strlen($json));
+                if ($this->actionStdinPacketSizes[$actionName]['compressed']) {
+                    $this->actionStdinPacketSizes[$actionName]['compressed']->add(strlen(gzencode($json)));
+                }
+                $process->stdin->write($json);
                 $this->emit('action.started', ['action' => $action, ]);
                 $action->emit('started');
             }
@@ -289,6 +336,23 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
      */
     public function runningActionNames() : array {
         return array_keys($this->runningActions);
+    }
+
+    public function getRpcPacketSizes(): array {
+        $result = [];
+        foreach ($this->actionStdinPacketSizes as $name => $sizes) {
+            $result[$name]['stdin'] = [
+                'uncompressed' => $sizes['uncompressed']->getHistogram(),
+                'compressed' => $sizes['compressed']?->getHistogram(),
+            ];
+        }
+        foreach ($this->actionStdoutPacketSizes as $name => $sizes) {
+            $result[$name]['stdout'] = [
+                'uncompressed' => $sizes['uncompressed']->getHistogram(),
+                'compressed' => $sizes['compressed']?->getHistogram(),
+            ];
+        }
+        return $result;
     }
 
     /**

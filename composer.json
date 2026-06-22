@@ -19,7 +19,8 @@
     "psr/log": "^1.0|^2.0|^3.0",
     "symfony/polyfill-php83" : "*",
     "psr/clock": "^1.0",
-    "justinrainbow/json-schema": "^6.6"
+    "justinrainbow/json-schema": "^6.6",
+    "clue/zlib-react": "^1.2"
   },
   "suggest": {
     "ext-zend-opcache": "OPCache greatly increases performance and reduces memory usage",

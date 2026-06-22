@@ -18,6 +18,8 @@ use React\EventLoop\Loop;
 use RuntimeException;
 
 use Throwable;
+use function deflate_add;
+use function deflate_init;
 use function error_get_last;
 use function escapeshellarg;
 use function file_exists;
@@ -29,6 +31,8 @@ use function posix_setpgid;
 use function realpath;
 use function register_shutdown_function;
 use function set_exception_handler;
+use function stream_filter_append;
+use function stream_filter_register;
 use const PHP_BINARY;
 
 if (! function_exists('EdgeTelemetrics\EventCorrelation\disableOutputBuffering')) {
@@ -88,6 +92,33 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\env')) {
         }
 
         return $env;
+    }
+}
+
+if (! class_exists('SyncFlushDeflateFilter')) {
+    class SyncFlushDeflateFilter extends \php_user_filter
+    {
+        private $context;
+
+        public function onCreate(): bool
+        {
+            $this->context = deflate_init(ZLIB_ENCODING_RAW, ['level' => -1]);
+            return true;
+        }
+
+        public function filter($in, $out, &$consumed, $closing): int
+        {
+            if ($this->context === null) {
+                return PSFS_ERR_FATAL;
+            }
+            while ($bucket = stream_bucket_make_writeable($in)) {
+                $consumed += $bucket->datalen;
+                $bucket->data = deflate_add($this->context, $bucket->data, $closing ? ZLIB_FINISH : ZLIB_SYNC_FLUSH);
+                $bucket->datalen = \strlen($bucket->data);
+                stream_bucket_append($out, $bucket);
+            }
+            return PSFS_PASS_ON;
+        }
     }
 }
 
@@ -219,6 +250,13 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\initialiseSourceProcess'
     {
         disableOutputBuffering();
         setupErrorHandling($usingEventLoop);
+        //Enable STDOUT compression if the env var is set. checkpoint() + error handlers use fwrite(STDOUT) and will be compressed transparently.
+        if (getenv('PHPEC_RPC_COMPRESSION') === '1') {
+            stream_filter_register('syncflush.deflate', __NAMESPACE__ . '\SyncFlushDeflateFilter');
+            if (stream_filter_append(STDOUT, 'syncflush.deflate', STREAM_FILTER_WRITE) === false) {
+                throw new RuntimeException('Failed to append sync-flush deflate filter to STDOUT');
+            }
+        }
         //Detach from the schedulers process group to ensure CTRL-C from shell isn't propagated
         if (function_exists('\posix_setpgid')) {
             posix_setpgid(0, 0);

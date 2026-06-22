@@ -2,6 +2,8 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Library\Actions;
 
+use Clue\React\Zlib\Compressor;
+use Clue\React\Zlib\Decompressor;
 use Closure;
 use Clue\React\NDJson\Encoder;
 use EdgeTelemetrics\EventCorrelation\JsonRpcLogger;
@@ -74,8 +76,22 @@ class ActionHelper extends EventEmitter {
         $buffer_size = $options['json_buffer_size'] ?? self::INPUT_BUFFER_SIZE;
 
         //Open our own handle to stdin and stdout instead of using STDIN/STDOUT so that when the Stream reader/writes close they don't close STDOUT/STDIN
-        $this->input = new Decoder(new ReadableResourceStream(fopen('php://stdin', 'r')), $buffer_size);
-        $this->output = new Encoder(new WritableResourceStream(fopen('php://stdout', 'w')));
+        $stdin = new ReadableResourceStream(fopen('php://stdin', 'r'));
+        $stdout = new WritableResourceStream(fopen('php://stdout', 'w'));
+
+        // ponytail: GZIP compression for action process I/O. Transparent to Decoder/Encoder downstream.
+        if ((getenv('PHPEC_RPC_COMPRESSION') ?: '') === '1') {
+            $decompressor = new Decompressor(ZLIB_ENCODING_GZIP);
+            $stdin->pipe($decompressor);
+            $this->input = new Decoder($decompressor, $buffer_size);
+
+            $compressor = new Compressor(ZLIB_ENCODING_GZIP);
+            $compressor->pipe($stdout);
+            $this->output = new Encoder($compressor);
+        } else {
+            $this->input = new Decoder($stdin, $buffer_size);
+            $this->output = new Encoder($stdout);
+        }
         $this->logger = new JsonRpcLogger(LogLevel::DEBUG, $this->output);
 
         $this->input->on('error', function(\Throwable $exception) use ($buffer_size) {

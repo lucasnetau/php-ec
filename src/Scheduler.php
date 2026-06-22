@@ -16,6 +16,7 @@ use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ActionExecutionCoordinator;
 use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
+use EdgeTelemetrics\EventCorrelation\Library\Histogram;
 use EdgeTelemetrics\EventCorrelation\Scheduler\MetricsCollector;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
@@ -27,6 +28,7 @@ use Psr\Log\LogLevel;
 use Psr\Log\NullLogger;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
+use Clue\React\Zlib\Decompressor;
 use React\ChildProcess\Process;
 use React\EventLoop\TimerInterface;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
@@ -61,7 +63,9 @@ use function gc_mem_caches;
 use function array_merge;
 use function random_bytes;
 use function round;
+use function strlen;
 use function trim;
+use function gzdeflate;
 
 use const SIGINT;
 use const SIGTERM;
@@ -110,6 +114,11 @@ class Scheduler implements LoggerAwareInterface {
      * @var array
      */
     protected array $input_processes_checkpoints = [];
+
+    /**
+     * @var array<string, Histogram>
+     */
+    protected array $inputRpcPacketSizes = [];
 
     /**
      * Keep track of Action execution
@@ -247,6 +256,11 @@ class Scheduler implements LoggerAwareInterface {
     protected MetricsCollector $metricsCollector;
 
     /**
+     * @var array Recent events buffer
+     */
+    protected array $recentEvents = [];
+
+    /**
      * Sets a logger.
      */
     public function setLogger(LoggerInterface $logger): void {
@@ -335,8 +349,12 @@ class Scheduler implements LoggerAwareInterface {
 
         $cmd->setLogger($this->logger);
         $this->input_processes[$id] = $cmd;
+
+        $this->inputRpcPacketSizes[$id] = new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576);
+
         /** Log any errors received. Wrapper will call exit after error */
-        $cmd->on('data', function(Event $event) {
+        $cmd->on('data', function(Event $event) use ($id) {
+            $this->inputRpcPacketSizes[$id]->add(strlen(json_encode($event)));
             $this->handleEvent($event);
         });
         $cmd->on('checkpoint', function($checkpoint) use($id) {
@@ -418,12 +436,25 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->critical("Failed to start input process {id}", ['id' => $id, 'exception' => $exception,]);
             return;
         }
+
+        // raw DEFLATE decompression for source stdout. PHP's zlib.deflate stream filter produces raw DEFLATE (RFC 1951), not GZIP.
+        $compress = ($this->input_processes_config[$id]['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
+        if ($compress) {
+            $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
+            $process->stdout->pipe($decompressor);
+            $process->stdout = $decompressor;
+        }
+
         $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
+
+        $this->inputRpcPacketSizes[$id] = new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576);
 
         /**
          * Handle RPC call from the input process
          */
         $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
+            $json = json_encode($rpc);
+            $this->inputRpcPacketSizes[$id]->add(strlen($json));
             switch ( $rpc->getMethod() ) {
                 case self::INPUT_ACTION_HANDLE:
                     $eventData = $rpc->getParam('event');
@@ -521,6 +552,31 @@ class Scheduler implements LoggerAwareInterface {
         });
     }
 
+    /**
+     * Add an event to the recent events buffer.
+     * @param Event $event
+     */
+    protected function addRecentEvent(Event $event): void
+    {
+        $this->recentEvents[] = [
+            'datetime' => $event->datetime->format('Y-m-d H:i:s'),
+            'event'    => $event->event,
+            'data'     => $event->getEventName() ? json_encode($event->getEventName()) : null,
+        ];
+        if (count($this->recentEvents) > 100) {
+            array_shift($this->recentEvents);
+        }
+    }
+
+    /**
+     * Get the recent events buffer.
+     * @return array
+     */
+    public function getRecentEvents(): array
+    {
+        return $this->recentEvents;
+    }
+
     protected function handleEvent(Event $event): void {
         try {
             $this->engine->handle($event);
@@ -528,6 +584,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->emergency("Rules must not throw exceptions", ['exception' => $ex]);
             $this->panic($ex);
         }
+        $this->addRecentEvent($event);
     }
 
     /**
@@ -1030,7 +1087,14 @@ class Scheduler implements LoggerAwareInterface {
         $state['uptime_msec'] = (int)round((hrtime(true) - $this->schedulerStartTime)/1e+6);
         $state['input']['running'] = array_keys($this->input_processes);
         $state['input']['checkpoints'] = $this->input_processes_checkpoints;
-        $state['actions'] = ['inflight' => array_map(function($action) { return $action['action']; }, $this->actionExecutionCoordinator->getInflightActionCommands()), 'errored' => $this->erroredActionCommands];
+        $state['input']['rpc_packet_sizes'] = array_map(fn($s) => [
+            $s->getHistogram(),
+        ], $this->inputRpcPacketSizes);
+        $state['actions'] = [
+            'inflight' => array_map(function($action) { return $action['action']; }, $this->actionExecutionCoordinator->getInflightActionCommands()),
+            'errored' => $this->erroredActionCommands,
+            'rpc_packet_sizes' => $this->actionExecutionCoordinator->getRpcPacketSizes(),
+        ];
         $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
         $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
         $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
