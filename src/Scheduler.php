@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use EdgeTelemetrics\EventCorrelation\Library\EventLog;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
@@ -255,10 +256,12 @@ class Scheduler implements LoggerAwareInterface {
      */
     protected MetricsCollector $metricsCollector;
 
+    protected bool $trackRecentEvents = false;
+
     /**
-     * @var array Recent events buffer
+     * @var EventLog Recent events buffer
      */
-    protected array $recentEvents = [];
+    protected EventLog $recentEvents;
 
     /**
      * Sets a logger.
@@ -284,6 +287,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->initialiseActionExecution();
         $this->metricsCollector = new MetricsCollector();
         $this->setLogger(new NullLogger());
+        $this->recentEvents = new EventLog();
 
         $this->state->on('scheduler.state.transition', function($new, $old) {
            $this->logger->info("Scheduler state transitioning from $old to $new");
@@ -553,28 +557,12 @@ class Scheduler implements LoggerAwareInterface {
     }
 
     /**
-     * Add an event to the recent events buffer.
-     * @param Event $event
-     */
-    protected function addRecentEvent(Event $event): void
-    {
-        $this->recentEvents[] = [
-            'datetime' => $event->datetime->format('Y-m-d H:i:s'),
-            'event'    => $event->event,
-            'data'     => $event->getEventName() ? json_encode($event->getEventName()) : null,
-        ];
-        if (count($this->recentEvents) > 100) {
-            array_shift($this->recentEvents);
-        }
-    }
-
-    /**
      * Get the recent events buffer.
      * @return array
      */
     public function getRecentEvents(): array
     {
-        return $this->recentEvents;
+        return $this->recentEvents->getEvents();
     }
 
     protected function handleEvent(Event $event): void {
@@ -584,7 +572,9 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->emergency("Rules must not throw exceptions", ['exception' => $ex]);
             $this->panic($ex);
         }
-        $this->addRecentEvent($event);
+        if ($this->trackRecentEvents) {
+            $this->recentEvents->add($event);
+        }
     }
 
     /**
