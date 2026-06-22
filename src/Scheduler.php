@@ -875,7 +875,7 @@ class Scheduler implements LoggerAwareInterface {
                 if (is_array($errored['error'])) {
                     $code = $errored['error']['code'] ?? 0;
                     if ($code < 0 && $code !== Error::INTERNAL_ERROR) {
-                        $this->logger?->debug("Action request with non-retryable error code", ["cmd" => $errored['action']['cmd'], "params" => $errored['action']['vars']]);
+                        $this->logger?->debug("Action request with non-retryable error code", ["code" => $code, "cmd" => $errored['action']['cmd'], "params" => $errored['action']['vars']]);
                         continue;
                     }
                 }
