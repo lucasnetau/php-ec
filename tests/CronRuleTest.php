@@ -24,7 +24,7 @@ class CronRuleTest extends TestCase {
         $rule = new class() extends Cron {
             const CRON_SCHEDULE = '*/1 * * * *';
 
-            public function onSchedule(): void {
+            public function onSchedule(DateTimeImmutable $scheduledTime): void {
                 $this->emit('test', ['msg' => 'onSchedule called']);
             }
         };
@@ -63,7 +63,7 @@ class CronRuleTest extends TestCase {
         $rule = new class() extends Cron {
             const CRON_SCHEDULE = Cron::ON_INITIALISATION;
 
-            public function onSchedule(): void {
+            public function onSchedule(DateTimeImmutable $scheduledTime): void {
                 $this->emit('test', ['msg' => 'onSchedule called']);
             }
         };
@@ -87,7 +87,7 @@ class CronRuleTest extends TestCase {
         $rule = new class() extends Cron {
             const CRON_SCHEDULE = Cron::ON_SHUTDOWN;
 
-            public function onSchedule(): void {
+            public function onSchedule(DateTimeImmutable $scheduledTime): void {
                 $this->emit('test', ['msg' => 'onSchedule called']);
             }
         };

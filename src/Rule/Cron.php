@@ -177,7 +177,7 @@ abstract class Cron extends Rule
     public function fire(): void
     {
         if ($this->complete()) {
-            $this->onSchedule();
+            $this->onSchedule(($this->getLastEvent() ?? $this->initEvent)->datetime);
         } elseif ($this->isTimedOut()) {
             $this->onTimeout();
             $this->onDone();
