@@ -114,7 +114,9 @@ class ActionExecutionTest extends TestCase {
         $scheduler->register_action('scriptAction',
             \EdgeTelemetrics\EventCorrelation\php_cmd(__DIR__ . '/scripts/Actions/logToScheduler.php'));
 
-        $scheduler->setHandleActionCallback(null, static function() use ($scheduler) { Loop::addTimer(0.4, $scheduler->shutdown(...)); });
+        $scheduler->on('action.completed', function($action) use ($scheduler) {
+            $scheduler->shutdown();
+        });
 
         Loop::futureTick(function () use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('scriptAction', ['scriptAction ran and able to log']));
