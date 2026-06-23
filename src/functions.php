@@ -11,6 +11,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation;
 
+use EdgeTelemetrics\EventCorrelation\Library\SyncFlushDeflateFilter;
 use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use Psr\Log\LogLevel;
@@ -92,33 +93,6 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\env')) {
         }
 
         return $env;
-    }
-}
-
-if (! class_exists('SyncFlushDeflateFilter')) {
-    class SyncFlushDeflateFilter extends \php_user_filter
-    {
-        private $context;
-
-        public function onCreate(): bool
-        {
-            $this->context = deflate_init(ZLIB_ENCODING_RAW, ['level' => -1]);
-            return true;
-        }
-
-        public function filter($in, $out, &$consumed, $closing): int
-        {
-            if ($this->context === null) {
-                return PSFS_ERR_FATAL;
-            }
-            while ($bucket = stream_bucket_make_writeable($in)) {
-                $consumed += $bucket->datalen;
-                $bucket->data = deflate_add($this->context, $bucket->data, $closing ? ZLIB_FINISH : ZLIB_SYNC_FLUSH);
-                $bucket->datalen = \strlen($bucket->data);
-                stream_bucket_append($out, $bucket);
-            }
-            return PSFS_PASS_ON;
-        }
     }
 }
 
@@ -257,7 +231,7 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\initialiseSourceProcess'
         setupErrorHandling($usingEventLoop);
         //Enable STDOUT compression if the env var is set. checkpoint() + error handlers use fwrite(STDOUT) and will be compressed transparently.
         if (getenv('PHPEC_RPC_COMPRESSION') === '1') {
-            stream_filter_register('syncflush.deflate', __NAMESPACE__ . '\SyncFlushDeflateFilter');
+            stream_filter_register('syncflush.deflate', SyncFlushDeflateFilter::class);
             if (stream_filter_append(STDOUT, 'syncflush.deflate', STREAM_FILTER_WRITE) === false) {
                 throw new RuntimeException('Failed to append sync-flush deflate filter to STDOUT');
             }
