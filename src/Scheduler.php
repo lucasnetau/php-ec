@@ -17,23 +17,18 @@ use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ActionExecutionCoordinator;
 use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
-use EdgeTelemetrics\EventCorrelation\Library\Histogram;
 use EdgeTelemetrics\EventCorrelation\Scheduler\MetricsCollector;
+use EdgeTelemetrics\EventCorrelation\Scheduler\SourceExecutionCoordinator;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use EdgeTelemetrics\EventCorrelation\StateMachine\IEventMatcher;
 use EdgeTelemetrics\JSON_RPC\Error;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerInterface;
-use Psr\Log\LogLevel;
 use Psr\Log\NullLogger;
 use React\EventLoop\Loop;
 use React\EventLoop\LoopInterface;
-use Clue\React\Zlib\Decompressor;
-use React\ChildProcess\Process;
 use React\EventLoop\TimerInterface;
-use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
-use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
 use RuntimeException;
 
 use Throwable;
@@ -45,12 +40,7 @@ use function bin2hex;
 use function function_exists;
 use function gc_enable;
 use function gc_enabled;
-use function gettype;
 use function hrtime;
-use function in_array;
-use function is_array;
-use function is_string;
-use function is_subclass_of;
 use function max;
 use function memory_get_peak_usage;
 use function number_format;
@@ -61,12 +51,8 @@ use function count;
 use function get_class;
 use function gc_collect_cycles;
 use function gc_mem_caches;
-use function array_merge;
 use function random_bytes;
 use function round;
-use function strlen;
-use function trim;
-use function gzdeflate;
 
 use const SIGINT;
 use const SIGTERM;
@@ -97,34 +83,19 @@ class Scheduler implements LoggerAwareInterface {
     protected CorrelationEngine $engine;
 
     /**
-     * @var Process[] Process table for running input processes
-     */
-    protected array $input_processes = [];
-
-    /**
      * @var string[] Class list of rules
      */
     protected array $rules = [];
 
     /**
-     * @var array Process Configuration for input processes
-     */
-    protected array $input_processes_config = [];
-
-    /**
-     * @var array
-     */
-    protected array $input_processes_checkpoints = [];
-
-    /**
-     * @var array<string, Histogram>
-     */
-    protected array $inputRpcPacketSizes = [];
-
-    /**
      * Keep track of Action execution
      */
     protected ActionExecutionCoordinator $actionExecutionCoordinator;
+
+    /**
+     * Keep track of Source process execution
+     */
+    protected SourceExecutionCoordinator $sourceExecutionCoordinator;
 
     /**
      * @var array
@@ -270,6 +241,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->logger = $logger;
         $this->engine->setLogger($logger);
         $this->actionExecutionCoordinator->setLogger($logger);
+        $this->sourceExecutionCoordinator->setLogger($logger);
         $this->metricsCollector->setLogger($this->logger);
     }
 
@@ -285,6 +257,7 @@ class Scheduler implements LoggerAwareInterface {
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
         $this->initialiseActionExecution();
+        $this->initialiseSourceExecution();
         $this->metricsCollector = new MetricsCollector();
         $this->setLogger(new NullLogger());
         $this->recentEvents = new EventLog();
@@ -304,7 +277,7 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function register_input_process(string|int $id, string|array|SourceFunction $cmd, ?string $wd = null, array $env = [], bool $essential = false, bool $autostart = true) : void
     {
-        $this->input_processes_config[$id] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'essential' => $essential, 'autostart' => $autostart];
+        $this->sourceExecutionCoordinator->register_input_process($id, $cmd, $wd, $env, $essential, $autostart);
     }
 
     /**
@@ -313,247 +286,7 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function unregister_input_process(string|int $id) : void
     {
-        unset($this->input_processes_config[$id]);
-    }
-
-    /**
-     * @return void
-     * @throws Throwable
-     */
-    protected function initialise_input_processes() : void {
-        $this->logger->debug('Initialising input processes');
-        foreach ($this->input_processes_config as $id => $config) {
-            if ($config['autostart'] === true) {
-                try {
-                    $this->initialise_input_process($id);
-                } catch (RuntimeException $ex) {
-                    $this->logger->emergency("An input process failed to start during initialisation.", ['exception' => $ex]);
-                    $this->panic($ex);
-                }
-            }
-        }
-        $this->state->transition(State::RUNNING);
-    }
-
-    protected function initialise_input_process(int|string $id) : Process|SourceFunction {
-        $config = $this->input_processes_config[$id];
-        if (is_subclass_of($config['cmd'], SourceFunction::class)) {
-            return $this->setup_source_function($id);
-        } else {
-            return $this->start_input_process($id);
-        }
-    }
-
-    protected function setup_source_function(int|string $id): SourceFunction
-    {
-        $config = $this->input_processes_config[$id];
-        /** @var SourceFunction $cmd */
-        $cmd = is_string($config['cmd']) ? new $config['cmd']() : clone $config['cmd'];
-        $env = $config['env'];
-
-        $cmd->setLogger($this->logger);
-        $this->input_processes[$id] = $cmd;
-
-        $this->inputRpcPacketSizes[$id] = new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576);
-
-        /** Log any errors received. Wrapper will call exit after error */
-        $cmd->on('data', function(Event $event) use ($id) {
-            $this->inputRpcPacketSizes[$id]->add(strlen(json_encode($event)));
-            $this->handleEvent($event);
-        });
-        $cmd->on('checkpoint', function($checkpoint) use($id) {
-            $this->input_processes_checkpoints[$id] = $checkpoint;
-            $this->dirty = true;
-        });
-        $cmd->on('error', function(Throwable $error) use ($id) {
-            $this->logger->error("{id}", ['id'=> $id, 'exception' => $error,]);
-        });
-        $cmd->on('exit', function($code) use($id) {
-            /** Remove from process table */
-            unset($this->input_processes[$id]);
-            $level = ($code === 0) ? LogLevel::INFO : LogLevel::ERROR;
-            $this->logger->log($level,"Input Process {id} exited with code: {code}", ['id' => $id, 'code' => $code,]);
-
-            /** Restart the input process if it exits with an error code */
-            if (!$this->state->isStopping() && $code === 0 && $this->input_processes_config[$id]['essential']) {
-                $this->logger->info("Essential input $id has stopped cleanly. Shutting down");
-                $this->shutdown();
-                return;
-            }
-            /** We stop processing if there are no input processes available **/
-            if (0 === count($this->input_processes)) {
-                $this->logger->info("No more input processes running. Shutting down");
-                $this->shutdown();
-            }
-        });
-        $checkpoint = $this->input_processes_checkpoints[$id] ?? null;
-        $this->loop->futureTick(static function() use ($cmd, $env, $checkpoint) {
-            $cmd->start($env, $checkpoint);
-        });
-        return $cmd;
-    }
-
-    /**
-     * @param int|string $id
-     * @return Process
-     */
-    protected function start_input_process(int|string $id) : Process {
-        if (isset($this->input_processes[$id])) {
-            $this->logger->critical('Input process ' . $id . ' already running');
-            return $this->input_processes[$id];
-        }
-        $config = $this->input_processes_config[$id];
-        $env = $config['env'];
-        /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
-        if (isset($this->input_processes_checkpoints[$id]))
-        {
-            $env = array_merge([static::CHECKPOINT_VARNAME => json_encode($this->input_processes_checkpoints[$id])], $env);
-        }
-        if (is_string($config['cmd'])) {
-            /** Use exec to ensure process receives our signals and not the bash wrapper */
-            $process = new Process('exec ' . $config['cmd'], $config['wd'], $env);
-        } else {
-            /** When passed an array, PHP will open the command directly without going through a shell */
-            $process = new Process($config['cmd'], $config['wd'], $env);
-        }
-        $this->setup_input_process($process, $id);
-        if ($process->isRunning()) {
-            $this->logger->info("Started input process $id");
-            $this->input_processes[$id] = $process;
-            if (function_exists('\posix_setpgid')) {
-                \posix_setpgid($process->getPid(), 0);
-            }
-            return $process;
-        }
-        throw new RuntimeException('Input process ' . $id . ' failed to start');
-    }
-
-    /**
-     * @param Process $process
-     * @param int|string $id
-     */
-    protected function setup_input_process(Process $process, int|string $id): void
-    {
-        try {
-            $process->start($this->loop);
-        } catch (RuntimeException $exception) {
-            $this->logger->critical("Failed to start input process {id}", ['id' => $id, 'exception' => $exception,]);
-            return;
-        }
-
-        // raw DEFLATE decompression for source stdout. PHP's zlib.deflate stream filter produces raw DEFLATE (RFC 1951), not GZIP.
-        $compress = ($this->input_processes_config[$id]['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
-        if ($compress) {
-            $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
-            $process->stdout->pipe($decompressor);
-            $process->stdout = $decompressor;
-        }
-
-        $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
-
-        $this->inputRpcPacketSizes[$id] = new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576);
-
-        /**
-         * Handle RPC call from the input process
-         */
-        $process_decoded_stdout->on('data', function(JsonRpcNotification $rpc) use ($id) {
-            $json = json_encode($rpc);
-            $this->inputRpcPacketSizes[$id]->add(strlen($json));
-            switch ( $rpc->getMethod() ) {
-                case self::INPUT_ACTION_HANDLE:
-                    $eventData = $rpc->getParam('event');
-                    if (!is_array($eventData)) {
-                        $this->logger->critical("Input process did not give us an event array to handle. Received type: {type}, value: {value} ", ['type' => gettype($eventData), 'value' => json_encode($eventData),]);
-                        return;
-                    }
-                    $event = new Event($eventData);
-                    /**
-                     * Pass the event to the engine to be handled
-                     */
-                    $this->handleEvent($event);
-                    break;
-                case self::INPUT_ACTION_CHECKPOINT:
-                    $this->input_processes_checkpoints[$id] = $rpc->getParams();
-                    $this->dirty = true;
-                    break;
-                case self::RPC_PROCESS_LOG:
-                    //Log action expects logLevel to match \Psr\Log\LogLevel
-                    $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'), $rpc->getParam('context') ?? []);
-                    break;
-                default:
-                    throw new RuntimeException("Unknown json rpc command {$rpc->getMethod()} from input process");
-            }
-        });
-
-        /**
-         * Log any errors we receive on the processed STDERR, error is a fatal event, and the stream will be closed, so we need to terminate the process since it can no longer communicate with us
-         */
-        $process_decoded_stdout->on('error', function(Throwable $error) use ($id, $process) {
-            $this->logger->error("{id}", ['id'=> $id, 'exception' => $error,]);
-            $process->terminate(SIGTERM);
-        });
-
-        /**
-         * Input processes STDOUT has closed, if we are not in the process of shutting down then we need to terminate the process since it can no longer communicate with us
-         */
-        $process->stdout->on('close', function() use ($id, $process) {
-            if (!$this->state->isStopping() && $process->isRunning()) {
-                //Use a timer to get around a race condition in Alpine linux where the process hasn't been reaped yet (SIGCHLD delayed?)
-                $this->loop->addTimer(0.1, function() use ($id, $process) {
-                    if ($process->isRunning()) {
-                        $this->logger->critical("{id} STDOUT closed unexpectedly, terminating process", ['id' => $id,]);
-                        $process->terminate(SIGTERM);
-                    }
-                });
-            }
-        });
-
-        /**
-         * Log STDERR messages from input processes
-         */
-        $process->stderr->on('data', function($data) use ($id) {
-            $this->logger->error("$id message: " . trim($data));
-        });
-
-        /**
-         * Handle process exiting
-         */
-        $process->on('exit', function($code, $term) use($id) {
-            /** Remove process from table  */
-            unset($this->input_processes[$id]);
-
-            if ($term === null) {
-                $level = ($code === 0) ? LogLevel::INFO : LogLevel::ERROR;
-                $this->logger->log($level,"Input Process {id} exited with code: {code}", ['id' => $id, 'code' => $code,]);
-            } else {
-                $this->logger->info("Input Process $id exited on signal: $term");
-            }
-            if ($code === 127) {
-                $this->logger->critical("Input process $id exit was due to Command Not Found");
-            } elseif ($code === 255) { //255 = PHP Fatal exit code
-                $this->logger->critical("Input process $id exit was due to fatal PHP error");
-            }
-            /** Restart the input process if it exits with an error code EXCEPT if it is exit code 127 - Command Not Found */
-            if (!$this->state->isStopping()) {
-                if (!in_array($code, [0, 127], true)) {
-                    $this->logger->debug("Restarting process $id");
-                    $this->start_input_process($id);
-                } elseif ($this->input_processes_config[$id]['essential']) {
-                    if ($code === 127) {
-                        $this->logger->info("Essential input process cannot be found. Shutting down");
-                    } else {
-                        $this->logger->info("Essential input process has stopped cleanly. Shutting down");
-                    }
-                    $this->shutdown();
-                    return;
-                }
-            }
-            /** We stop processing if there are no input processes available **/
-            if (0 === count($this->input_processes)) {
-                $this->logger->info("No more input processes running. Shutting down");
-                $this->shutdown();
-            }
-        });
+        $this->sourceExecutionCoordinator->unregister_input_process($id);
     }
 
     /**
@@ -641,7 +374,7 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         $ec->on('idle', function() {
-            if ($this->state->isStopping() && count($this->input_processes) === 0) {
+            if ($this->state->isStopping() && $this->sourceExecutionCoordinator->getRunningProcessCount() === 0) {
                 $this->logger->debug('All processes have stopped');
                 /** If we are shutting down and all input and action processes have stopped then continue the shutdown process straight away instead of waiting for the timers */
                 $this->exit();
@@ -671,6 +404,39 @@ class Scheduler implements LoggerAwareInterface {
                 'action' => $action,
             ];
             $this->erroredActionCommands[] = $error;
+        });
+    }
+
+    protected function initialiseSourceExecution() : void {
+        $this->sourceExecutionCoordinator = $sec = new SourceExecutionCoordinator($this->loop);
+
+        $sec->on('event', $this->handleEvent(...));
+
+        $sec->on('dirty', function() {
+            $this->dirty = true;
+        });
+
+        $sec->on('log', function($logLevel, $message, $context) {
+            $this->logger->log($logLevel, $message, $context);
+        });
+
+        $sec->on('error', function($data) {
+            if (isset($data['exception'])) {
+                $this->logger->error("{id}", ['id' => $data['id'] ?? '', 'exception' => $data['exception']]);
+            } elseif (isset($data['message'])) {
+                $this->logger->critical($data['message'], $data);
+            }
+        });
+
+        $sec->on('essential_exit', function($id) {
+            $this->shutdown();
+        });
+
+        $sec->on('all_processes_stopped', function() {
+            if (!$this->state->isStopping()) {
+                $this->logger->info("No more input processes running. Shutting down");
+                $this->shutdown();
+            }
         });
     }
 
@@ -848,13 +614,14 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Handle request to run an on demand source */
         $this->engine->on('source', function(Scheduler\Messages\ExecuteSource $execute) {
-            if (isset($this->input_processes_config[$execute->getCmd()])) {
-                $config = $this->input_processes_config[$execute->getCmd()];
+            $config = $this->sourceExecutionCoordinator->getInputProcessesConfig();
+            if (isset($config[$execute->getCmd()])) {
+                $cfg = $config[$execute->getCmd()];
                 $rndid = $execute->getCmd() . '_' . bin2hex(random_bytes(4)); //Generate unique ID for the on demand run
-                $env = ($config['env'] ?? []) + $execute->getVars();
+                $env = ($cfg['env'] ?? []) + $execute->getVars();
                 //Register the on demand source
-                $this->register_input_process($rndid, $config['cmd'], $config['wd'], $env, false, false);
-                $process = $this->initialise_input_process($rndid);
+                $this->register_input_process($rndid, $cfg['cmd'], $cfg['wd'], $env, false, false);
+                $process = $this->sourceExecutionCoordinator->initialise_input_process($rndid);
                 $process->on('exit', function() use ($rndid) {
                     $this->unregister_input_process($rndid); //Remove config once process exits
                 });
@@ -887,7 +654,8 @@ class Scheduler implements LoggerAwareInterface {
                         $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
                         $this->state->transition(State::STARTING);
                         $this->saveStateHandler->saveStateSync($this->buildState());
-                        $this->initialise_input_processes();
+                        $this->sourceExecutionCoordinator->initialise_input_processes();
+                        $this->state->transition(State::RUNNING);
                     }
                 });
                 foreach($retryable as $action) {
@@ -897,10 +665,12 @@ class Scheduler implements LoggerAwareInterface {
                 //No actions were retryable so we continue with booting the Scheduler
                 $this->state->transition(State::STARTING);
                 $this->saveStateHandler->saveStateSync($this->buildState());
-                $this->initialise_input_processes();
+                $this->sourceExecutionCoordinator->initialise_input_processes();
+                $this->state->transition(State::RUNNING);
             }
         } else {
-            $this->initialise_input_processes();
+            $this->sourceExecutionCoordinator->initialise_input_processes();
+            $this->state->transition(State::RUNNING);
         }
 
         /** Initialise the state saving task */
@@ -970,22 +740,14 @@ class Scheduler implements LoggerAwareInterface {
      */
     public function shutdown() : void {
         $this->state->transition(State::STOPPING);
+        $this->sourceExecutionCoordinator->setStopping(true);
         while ($task = array_pop($this->scheduledTasks)) {
             $this->loop->cancelTimer($task);
             $task = null;
         }
 
-        if (count($this->input_processes) > 0) {
-            $this->logger->debug( "Shutting down running input processes");
-            foreach ($this->input_processes as $processKey => $process) {
-                $this->logger->debug( "Sending SIGTERM to input process $processKey");
-                if (false === $process->terminate(SIGTERM)) {
-                    $this->logger->error( "Unable to send SIGTERM to input process $processKey");
-                }
-                if ($process->isStopped()) {
-                    $process->terminate(SIGCONT); // If our input processes are paused by memory pressure then we need to send SIGCONT after SIGTERM as they are currently stopped
-                }
-            }
+        if ($this->sourceExecutionCoordinator->getRunningProcessCount() > 0) {
+            $this->sourceExecutionCoordinator->shutdown();
 
             //Set up a timer to forcefully move the scheduler into the next shutdown phase if the input's have not shutdown in time
             $this->shutdownTimer = $this->loop->addTimer(10.0, function() {
@@ -1075,11 +837,11 @@ class Scheduler implements LoggerAwareInterface {
         $state = [];
         $state['state'] = $this->state->state();
         $state['uptime_msec'] = (int)round((hrtime(true) - $this->schedulerStartTime)/1e+6);
-        $state['input']['running'] = array_keys($this->input_processes);
-        $state['input']['checkpoints'] = $this->input_processes_checkpoints;
+        $state['input']['running'] = array_keys($this->sourceExecutionCoordinator->getInputProcesses());
+        $state['input']['checkpoints'] = $this->sourceExecutionCoordinator->getInputProcessesCheckpoints();
         $state['input']['rpc_packet_sizes'] = array_map(fn($s) => [
             $s->getHistogram(),
-        ], $this->inputRpcPacketSizes);
+        ], $this->sourceExecutionCoordinator->getInputRpcPacketSizes());
         $state['actions'] = [
             'inflight' => array_map(function($action) { return $action['action']; }, $this->actionExecutionCoordinator->getInflightActionCommands()),
             'errored' => $this->erroredActionCommands,
@@ -1099,7 +861,7 @@ class Scheduler implements LoggerAwareInterface {
      */
     protected function setState(array $state) : void
     {
-        $this->input_processes_checkpoints = $state['input']['checkpoints'];
+        $this->sourceExecutionCoordinator->setInputProcessesCheckpoints($state['input']['checkpoints']);
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
         /** @TODO, this could be a big array, we need to handle that in a memory sensitive way */
         $erroredCount = count($state['actions']['errored']);
@@ -1167,13 +929,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->warning(
                 "Currently using $percent_used% of memory limit with {$this->actionExecutionCoordinator->inflightActionCount()} inflight actions. Pausing input processes");
 
-            foreach($this->input_processes as $processId => $process)
-            {
-                if ($process->isRunning()) {
-                    $process->terminate(SIGSTOP);
-                    $this->logger->debug("Paused input process {id}", ['id' => $processId,]);
-                }
-            }
+            $this->sourceExecutionCoordinator->pauseAllProcesses();
             $this->pausedOnMemoryPressure = true;
             ++$this->pausedOnMemoryPressureCount;
 
@@ -1197,17 +953,14 @@ class Scheduler implements LoggerAwareInterface {
                 $percent_used <= static::MEMORY_PRESSURE_LOW_WATERMARK &&
                 $this->actionExecutionCoordinator->inflightActionCount() < static::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
 
-                //Cancel the memory pressure timout
+                //Cancel the memory pressure timeout
                 if ($this->scheduledTasks['pausedOnMemoryPressureTimer'] !== null) {
                     $this->loop->cancelTimer($this->scheduledTasks['pausedOnMemoryPressureTimer']);
                     unset($this->scheduledTasks['pausedOnMemoryPressureTimer']);
                 }
                 $this->memoryReclaim();
                 //Resume input
-                foreach ($this->input_processes as $processId => $process) {
-                    $process->terminate(SIGCONT);
-                    $this->logger->debug( "Resuming input process {id}", ['id' => $processId,]);
-                }
+                $this->sourceExecutionCoordinator->resumeAllProcesses();
                 $this->pausedOnMemoryPressure = false;
             }
         }
@@ -1263,7 +1016,7 @@ class Scheduler implements LoggerAwareInterface {
     public function getConfig() : array {
         return [
             'rules' => $this->rules,
-            'input' => $this->input_processes_config,
+            'input' => $this->sourceExecutionCoordinator->getInputProcessesConfig(),
             'actions' => $this->actionExecutionCoordinator->getConfig(),
         ];
     }
