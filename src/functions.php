@@ -248,6 +248,11 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
 if (! function_exists('EdgeTelemetrics\EventCorrelation\initialiseSourceProcess')) {
     function initialiseSourceProcess(bool $usingEventLoop) : void
     {
+        static $run = false;
+        if ($run) {
+            throw new RuntimeException("EdgeTelemetrics\EventCorrelation\initialiseSourceProcess() should only be called once per process");
+        }
+        $run = true;
         disableOutputBuffering();
         setupErrorHandling($usingEventLoop);
         //Enable STDOUT compression if the env var is set. checkpoint() + error handlers use fwrite(STDOUT) and will be compressed transparently.
