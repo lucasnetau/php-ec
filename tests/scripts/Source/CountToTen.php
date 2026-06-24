@@ -6,6 +6,21 @@ use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 
 include __DIR__ . "/../../../vendor/autoload.php";
 
+$signalHandler = function(int $signal) {
+    $lookup = [
+        SIGINT => 'SIGINT',
+        SIGTERM => 'SIGTERM',
+        SIGKILL => 'SIGKILL',
+    ];
+    error_log("Source received signal " . $lookup[$signal] ?? $signal . "finishing up...");
+    exit(0);
+};
+
+/** Signal Handlers */
+pcntl_async_signals(true);
+pcntl_signal(SIGINT, $signalHandler);
+pcntl_signal(SIGTERM, $signalHandler);
+
 $delay = (int)((getenv('DELAY') ?: 0)*1e+6);
 
 for($i = 1;  $i <= 10; $i++) {
