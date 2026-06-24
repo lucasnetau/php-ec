@@ -11,7 +11,6 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
-use Clue\React\Zlib\Compressor;
 use Clue\React\Zlib\Decompressor;
 use EdgeTelemetrics\EventCorrelation\Action;
 use EdgeTelemetrics\EventCorrelation\Library\Histogram;
@@ -72,6 +71,9 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
     /** @var array<string, array{uncompressed: Histogram, compressed: ?Histogram}> */
     protected array $actionStdoutPacketSizes = [];
 
+    /** @var array<string, resource> */
+    protected array $deflateContexts = [];
+
     public function __construct() {
         $this->inflightActionClosures = new \WeakMap();
     }
@@ -109,16 +111,14 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
             $process->start(Loop::get());
             $this->emit('process.start', ['actionName' => $actionName]);
 
-            // GZIP compression for action I/O. GZIP frames are self-contained and better for streaming than raw DEFLATE.
+            // raw DEFLATE + SYNC_FLUSH for action I/O. Matches source process approach.
             $compress = ($actionConfig['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
             if ($compress) {
-                $decompressor = new Decompressor(ZLIB_ENCODING_GZIP);
+                $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
                 $process->stdout->pipe($decompressor);
                 $process->stdout = $decompressor;
 
-                $compressor = new Compressor(ZLIB_ENCODING_GZIP);
-                $compressor->pipe($process->stdin);
-                $process->stdin = $compressor;
+                $this->deflateContexts[$actionName] = deflate_init(ZLIB_ENCODING_RAW, ['level' => -1]);
             }
 
             $process->stderr->on('data', function ($data) use ($actionName) {
@@ -206,6 +206,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     $this->emit('process.error', ['actionName' => $actionName, 'error' => $terminatedMessage ?? 'Unknown pid']);
                 }
                 unset($this->runningActions[$actionName]);
+                unset($this->deflateContexts[$actionName]);
                 $this->checkIdle();
                 $this->emit('dirty');
             });
@@ -281,7 +282,12 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 if ($this->actionStdinPacketSizes[$actionName]['compressed']) {
                     $this->actionStdinPacketSizes[$actionName]['compressed']->add(strlen(gzencode($json)));
                 }
-                $process->stdin->write($json);
+                if (isset($this->deflateContexts[$actionName])) {
+                    $compressed = deflate_add($this->deflateContexts[$actionName], $json, ZLIB_SYNC_FLUSH);
+                    $process->stdin->write($compressed);
+                } else {
+                    $process->stdin->write($json);
+                }
                 $this->emit('action.started', ['action' => $action, ]);
                 $action->emit('started');
             }

@@ -2,8 +2,8 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Library\Actions;
 
-use Clue\React\Zlib\Compressor;
 use Clue\React\Zlib\Decompressor;
+use EdgeTelemetrics\EventCorrelation\Library\SyncFlushCompressor;
 use Closure;
 use Clue\React\NDJson\Encoder;
 use EdgeTelemetrics\EventCorrelation\JsonRpcLogger;
@@ -79,13 +79,13 @@ class ActionHelper extends EventEmitter {
         $stdin = new ReadableResourceStream(fopen('php://stdin', 'r'));
         $stdout = new WritableResourceStream(fopen('php://stdout', 'w'));
 
-        // ponytail: GZIP compression for action process I/O. Transparent to Decoder/Encoder downstream.
+        // ponytail: raw DEFLATE + SYNC_FLUSH for action process I/O. Matches source process approach.
         if ((getenv('PHPEC_RPC_COMPRESSION') ?: '') === '1') {
-            $decompressor = new Decompressor(ZLIB_ENCODING_GZIP);
+            $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
             $stdin->pipe($decompressor);
             $this->input = new Decoder($decompressor, $buffer_size);
 
-            $compressor = new Compressor(ZLIB_ENCODING_GZIP);
+            $compressor = new SyncFlushCompressor(ZLIB_ENCODING_RAW);
             $compressor->pipe($stdout);
             $this->output = new Encoder($compressor);
         } else {
