@@ -7,7 +7,6 @@ use EdgeTelemetrics\EventCorrelation\Library\Source\GeneratorSource;
 use EdgeTelemetrics\EventCorrelation\Rule;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ObservableScheduler;
-use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use Generator;
 use PHPUnit\Framework\TestCase;
 use React\EventLoop\Loop;

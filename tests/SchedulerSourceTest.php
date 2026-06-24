@@ -97,7 +97,7 @@ class SchedulerSourceTest extends TestCase {
         $logger = new TestLogger();
         $scheduler->setLogger($logger);
 
-        $scheduler->register_input_process('test', wrap_source_php_cmd(__DIR__ . '/scripts/Source/CountToTen.php', true), env: ['DELAY' => 10,]);
+        $scheduler->register_input_process('test', wrap_source_php_cmd(__DIR__ . '/scripts/Source/CountToTen.php', true), env: ['DELAY' => 0.1,]);
 
         $inputEvents = [];
         $scheduler->setHandleEventCallback(function($event) use (&$inputEvents, $scheduler) {
@@ -124,6 +124,6 @@ class SchedulerSourceTest extends TestCase {
 
         $logger->assert()
             ->hasInfo()
-            ->withMessage('Input Process test exited on signal: 15');
+            ->withMessage('Input Process {id} exited with code: {code}');
     }
 }

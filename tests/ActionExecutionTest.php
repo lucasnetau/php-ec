@@ -167,15 +167,15 @@ class ActionExecutionTest extends TestCase {
         $scheduler->register_action('scriptAction',
             \EdgeTelemetrics\EventCorrelation\php_cmd(__DIR__ . '/scripts/Actions/exception.php'));
 
+        $scheduler->on('action.completed', function($action) use ($scheduler) {
+            Loop::futureTick($scheduler->shutdown(...));
+        });
+        $scheduler->on('action.failed', function($action, $exception) use ($scheduler) {
+            Loop::futureTick($scheduler->shutdown(...));
+        });
+
         Loop::futureTick(function () use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('scriptAction', []));
-
-            $shutdownTimer = Loop::addPeriodicTimer(0.5, function () use ($scheduler, $logger, &$shutdownTimer) {
-                if (count($scheduler->getErroredActions()) > 0) {
-                    Loop::cancelTimer($shutdownTimer);
-                    $scheduler->exit();
-                }
-            });
         });
 
         $scheduler->run();
@@ -202,15 +202,15 @@ class ActionExecutionTest extends TestCase {
         $scheduler->register_action('scriptAction',
             \EdgeTelemetrics\EventCorrelation\php_cmd(__DIR__ . '/scripts/Actions/incorrect_return_code.php'));
 
+        $scheduler->on('action.completed', function($action) use ($scheduler) {
+            Loop::futureTick($scheduler->shutdown(...));
+        });
+        $scheduler->on('action.failed', function($action, $exception) use ($scheduler) {
+            Loop::futureTick($scheduler->shutdown(...));
+        });
+
         Loop::futureTick(function () use ($scheduler, $logger) {
             $scheduler->queueAction(new Action('scriptAction', []));
-
-            $shutdownTimer = Loop::addPeriodicTimer(0.5, function () use ($scheduler, $logger, &$shutdownTimer) {
-                if (count($scheduler->getErroredActions()) > 0) {
-                    Loop::cancelTimer($shutdownTimer);
-                    $scheduler->exit();
-                }
-            });
         });
 
         $scheduler->run();

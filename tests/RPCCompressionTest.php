@@ -69,10 +69,11 @@ class RPCCompressionTest extends TestCase
             env: ['PHPEC_RPC_COMPRESSION' => '1']);
 
         $scheduler->on('action.completed', function($action) use ($scheduler) {
-            $scheduler->shutdown();
+            Loop::futureTick($scheduler->shutdown(...));
         });
 
-        Loop::futureTick(function () use ($scheduler) {
+        Loop::futureTick(function () use ($scheduler, $logger) {
+            $logger->debug('Running action');
             $scheduler->queueAction(new Action('scriptAction', ['scriptAction ran and able to log']));
         });
 
