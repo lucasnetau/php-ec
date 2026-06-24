@@ -436,6 +436,8 @@ class Scheduler implements LoggerAwareInterface {
             if (!$this->state->isStopping()) {
                 $this->logger->info("No more input processes running. Shutting down");
                 $this->shutdown();
+            } else {
+                $this->shutdown_phase2();
             }
         });
     }
