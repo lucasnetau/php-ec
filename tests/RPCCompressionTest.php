@@ -68,7 +68,9 @@ class RPCCompressionTest extends TestCase
             php_cmd(__DIR__ . '/scripts/Actions/logToScheduler.php'),
             env: ['PHPEC_RPC_COMPRESSION' => '1']);
 
-        $scheduler->setHandleActionCallback(null, static function() use ($scheduler) { Loop::addTimer(1.0, $scheduler->shutdown(...)); });
+        $scheduler->on('action.completed', function($action) use ($scheduler) {
+            $scheduler->shutdown();
+        });
 
         Loop::futureTick(function () use ($scheduler) {
             $scheduler->queueAction(new Action('scriptAction', ['scriptAction ran and able to log']));
@@ -115,7 +117,9 @@ class RPCCompressionTest extends TestCase
         $scheduler->register_action('scriptAction',
             php_cmd(__DIR__ . '/scripts/Actions/logToScheduler.php'));
 
-        $scheduler->setHandleActionCallback(null, static function() use ($scheduler) { Loop::addTimer(1.0, $scheduler->shutdown(...)); });
+        $scheduler->on('action.completed', function($action) use ($scheduler) {
+            $scheduler->shutdown();
+        });
 
         Loop::futureTick(function () use ($scheduler) {
             $scheduler->queueAction(new Action('scriptAction', ['backward compat works']));
