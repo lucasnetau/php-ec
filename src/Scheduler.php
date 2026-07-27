@@ -17,6 +17,7 @@ use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ActionExecutionCoordinator;
 use EdgeTelemetrics\EventCorrelation\Scheduler\Heartbeat;
+use EdgeTelemetrics\EventCorrelation\Scheduler\MemoryManager;
 use EdgeTelemetrics\EventCorrelation\Scheduler\MetricsCollector;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceExecutionCoordinator;
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
@@ -205,17 +206,10 @@ class Scheduler implements LoggerAwareInterface {
     /** @var string RPC method name to get an action handler to run a request */
     const ACTION_RUN_METHOD = 'run';
 
-    /** @var int */
-    protected int $memoryLimit = 0;
-
-    /** @var int */
-    protected int $currentMemoryPercentUsed = 0;
-
-    /** @var bool Flag tracking if we have paused dispatching */
-    protected bool $pausedOnMemoryPressure = false;
-
-    /** @var int Counter of how many times we have hit the memory HIGH WATERMARK during execution, a high number suggested that memory resources or limit should be increased */
-    protected int $pausedOnMemoryPressureCount = 0;
+    /**
+     * @var MemoryManager
+     */
+    protected MemoryManager $memoryManager;
 
     /** @var TimerInterface|null */
     protected ?TimerInterface $shutdownTimer = null;
@@ -258,6 +252,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->actionExecutionCoordinator->setLogger($logger);
         $this->sourceExecutionCoordinator->setLogger($logger);
         $this->metricsCollector->setLogger($this->logger);
+        $this->memoryManager->setLogger($logger);
     }
 
     /**
@@ -274,6 +269,17 @@ class Scheduler implements LoggerAwareInterface {
         $this->initialiseActionExecution();
         $this->initialiseSourceExecution();
         $this->metricsCollector = new MetricsCollector();
+        $this->memoryManager = new MemoryManager(
+            $this->loop,
+            $this->actionExecutionCoordinator->inflightActionCount(...),
+            $this->sourceExecutionCoordinator->pauseAllProcesses(...),
+            $this->sourceExecutionCoordinator->resumeAllProcesses(...),
+            $this->shutdown(...),
+            static::MEMORY_PRESSURE_HIGH_WATERMARK,
+            static::MEMORY_PRESSURE_LOW_WATERMARK,
+            static::RUNNING_ACTION_LIMIT_HIGH_WATERMARK,
+            static::RUNNING_ACTION_LIMIT_LOW_WATERMARK,
+        );
         $this->setLogger(new NullLogger());
         $this->recentEvents = new EventLog();
 
@@ -651,7 +657,7 @@ class Scheduler implements LoggerAwareInterface {
         unset($savedState);
 
         /** Force a run of the PHP GC and release caches. This helps clear out memory consumed by restoring state from a large json file */
-        $this->memoryReclaim();
+        $this->memoryManager->reclaim();
 
         /** Inject some synthetic events in to the engine to flag that the engine is starting for the first time or restoring
          * Rules can handle these events for initialisation purposes (handy for setting up rules that detect when an event is missing)
@@ -822,7 +828,7 @@ class Scheduler implements LoggerAwareInterface {
 
         $this->loop->addPeriodicTimer(5, function() {
             // Update metric for current memory usage (percentage)
-            $this->metricsCollector->set('memory', 'percent_used', $this->currentMemoryPercentUsed);
+            $this->metricsCollector->set('memory', 'percent_used', $this->memoryManager->getPercentUsed());
             $this->metricsCollector->set('memory', 'total_used', memory_get_usage(true));
 
             // Also expose the number of inflight actions
@@ -833,12 +839,8 @@ class Scheduler implements LoggerAwareInterface {
         $this->engine->on('stat', $this->metricsCollector->set(...));
 
         /** Monitor memory usage */
-        $sysInfo = new SysInfo();
-        $this->memoryLimit = $sysInfo->getMemoryLimit();
-        $allowable = $sysInfo->getAllowableMemoryLimit();
-        $percentage = $this->memoryLimit === -1 ? 100 : ($this->memoryLimit/$allowable)*100;
-        $this->logger->debug("Memory limit set to {bytes} Bytes {percent}% of {total} Total Allowable", ['bytes' => $this->memoryLimit, 'total' => $allowable, 'percent' => number_format($percentage, 2)]);
-        $this->loop->addPeriodicTimer(2, function() { $this->checkMemoryPressure(); });
+        $this->memoryManager->initialise();
+        $this->memoryManager->start();
 
         /** Gracefully shutdown */
         // ctrl+c
@@ -857,7 +859,7 @@ class Scheduler implements LoggerAwareInterface {
              * Force a run of the PHP GC and release caches.
              */
             $this->logger->debug("SIGHUP received, clearing caches and saving non-dirty state");
-            $this->memoryReclaim();
+            $this->memoryManager->reclaim();
             $this->saveStateHandler->saveStateSync($this->buildState());
         });
 
@@ -874,6 +876,7 @@ class Scheduler implements LoggerAwareInterface {
     public function shutdown() : void {
         $this->state->transition(State::STOPPING);
         $this->sourceExecutionCoordinator->setStopping(true);
+        $this->memoryManager->stop();
         while ($task = array_pop($this->scheduledTasks)) {
             $this->loop->cancelTimer($task);
             $task = null;
@@ -980,9 +983,9 @@ class Scheduler implements LoggerAwareInterface {
             'errored' => $this->erroredActionCommands,
             'rpc_packet_sizes' => $this->actionExecutionCoordinator->getRpcPacketSizes(),
         ];
-        $state['inputPaused'] = $this->pausedOnMemoryPressure ? 'Yes' : 'No';
-        $state['pausedCount'] = $this->pausedOnMemoryPressureCount;
-        $state['memoryPercentageUsed'] = $this->currentMemoryPercentUsed;
+        $state['inputPaused'] = $this->memoryManager->isPaused() ? 'Yes' : 'No';
+        $state['pausedCount'] = $this->memoryManager->getPausedCount();
+        $state['memoryPercentageUsed'] = $this->memoryManager->getPercentUsed();
         $state['saveFileSizeBytes'] = $this->saveStateHandler?->lastSaveSizeBytes();
         $state['saveStateLastDuration'] = $this->saveStateHandler?->lastSaveWriteDuration();
         //@TODO add a clean shutdown flag here in save state
@@ -1020,98 +1023,6 @@ class Scheduler implements LoggerAwareInterface {
                     'action' => $inflight,
                 ];
             }
-        }
-    }
-
-    /**
-     * Memory usage can increase rapidly with Rules that are buffering data, and a large number of inflight Action Commands (specifically the state table tracking their execution, or failure).
-     * Compare our memory usage against the limit set for the PHP process and a HIGH watermark,
-     *  once we go above the high watermark or the number of inflight actions exceeds the running actions watermark,
-     *  we pause input processes to allow inflight actions to complete and reduce memory usage.
-     */
-    protected function checkMemoryPressure() : void
-    {
-        if ($this->memoryLimit === 0) {
-            $sysInfo = new SysInfo();
-            $this->memoryLimit = $sysInfo->getMemoryLimit();
-        } elseif ($this->memoryLimit === -1) {
-            return; //We are configured for unlimited memory, so we disable memory pressure checks
-        }
-
-        $current_memory_usage = memory_get_usage();
-
-        $percent_used = (int)round(($current_memory_usage / $this->memoryLimit) * 100);
-
-        /** Try releasing memory first and recalculate percentage used */
-        if ($percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK) {
-            /** Running this every check cycle negatively impacts the scheduler's performance,
-             *   however, since we are paused (or going to pause) at this stage, and are awaiting the external action processes to complete the actual impact will be minimal
-             */
-            $this->memoryReclaim();
-            $current_memory_usage = memory_get_usage();
-            $percent_used = (int)round(($current_memory_usage / $this->memoryLimit) * 100);
-        }
-
-        $this->currentMemoryPercentUsed = $percent_used;
-
-        if (false === $this->pausedOnMemoryPressure &&
-                ($percent_used >= static::MEMORY_PRESSURE_HIGH_WATERMARK ||
-                    $this->actionExecutionCoordinator->inflightActionCount() > static::RUNNING_ACTION_LIMIT_HIGH_WATERMARK)
-        )
-        {
-            $this->logger->warning(
-                "Currently using $percent_used% of memory limit with {$this->actionExecutionCoordinator->inflightActionCount()} inflight actions. Pausing input processes");
-
-            $this->sourceExecutionCoordinator->pauseAllProcesses();
-            $this->pausedOnMemoryPressure = true;
-            ++$this->pausedOnMemoryPressureCount;
-
-            $inflightActionCount = $this->actionExecutionCoordinator->inflightActionCount();
-            /** @TODO take into account delaying shutdown if we still have some outstanding actions and memory usage is dropping */
-            $this->scheduledTasks['pausedOnMemoryPressureTimer'] = $this->loop->addPeriodicTimer(300, function() use (&$inflightActionCount) {
-                $currentActionCount = $this->actionExecutionCoordinator->inflightActionCount();
-                if ($currentActionCount < $inflightActionCount) {
-                    $this->logger->debug("Current action count dropped from {old} to {new}", ['old' => $inflightActionCount, 'new' => $currentActionCount]);;
-                }
-                if ($this->pausedOnMemoryPressure && $currentActionCount >= $inflightActionCount) {
-                    $this->logger->critical("Timeout! Input processes are still paused and inflight actions not reducing, shutting down");
-                    $this->shutdown();
-                }
-                $inflightActionCount = $currentActionCount;
-            });
-        }
-        else
-        {
-            if ($this->pausedOnMemoryPressure &&
-                $percent_used <= static::MEMORY_PRESSURE_LOW_WATERMARK &&
-                $this->actionExecutionCoordinator->inflightActionCount() < static::RUNNING_ACTION_LIMIT_LOW_WATERMARK) {
-
-                //Cancel the memory pressure timeout
-                if ($this->scheduledTasks['pausedOnMemoryPressureTimer'] !== null) {
-                    $this->loop->cancelTimer($this->scheduledTasks['pausedOnMemoryPressureTimer']);
-                    unset($this->scheduledTasks['pausedOnMemoryPressureTimer']);
-                }
-                $this->memoryReclaim();
-                //Resume input
-                $this->sourceExecutionCoordinator->resumeAllProcesses();
-                $this->pausedOnMemoryPressure = false;
-            }
-        }
-    }
-
-    /**
-     * Run memory reclaim
-     */
-    protected function memoryReclaim() : void {
-        $mark = hrtime(true);
-        $memCurr = memory_get_usage();
-        $cycles = gc_collect_cycles();
-        $bytes = gc_mem_caches();
-        $saved = max(0, $memCurr - memory_get_usage()); //Don't show a negative value if we don't release anything
-        $time = (int)round((hrtime(true)-$mark)/1e+3);
-        $this->logger->debug("GC Run Complete in $time μs {cycles: $cycles, reclaim: $bytes, reduced: $saved bytes, current: " . round(memory_get_usage() / 1048576,2) . "MB, max: " . round(memory_get_peak_usage() / 1048576,2) ."MB}");
-        if (function_exists('memory_reset_peak_usage')) {
-            \memory_reset_peak_usage();
         }
     }
 
