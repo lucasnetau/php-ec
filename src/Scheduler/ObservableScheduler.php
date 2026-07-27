@@ -120,4 +120,36 @@ class ObservableScheduler extends Scheduler implements EventEmitterInterface {
     public function isDirty() : bool {
         return $this->dirty || $this->engine->isDirty();
     }
+
+    public function hasRecoveryMarker(): bool {
+        return parent::hasRecoveryMarker();
+    }
+
+    public function getRecoveryCooldownRemaining(): int {
+        return parent::getRecoveryCooldownRemaining();
+    }
+
+    public function getRecoveryAttemptCount(): int {
+        return parent::getRecoveryAttemptCount();
+    }
+
+    public function createRecoveryMarker(): void {
+        parent::createRecoveryMarker();
+    }
+
+    public function clearRecoveryMarker(): void {
+        parent::clearRecoveryMarker();
+    }
+
+    public function setRecoveryCooldown(): void {
+        parent::setRecoveryCooldown();
+    }
+
+    public function getRecoveryMarkerPath(): string {
+        return $this->recoveryMarkerFile;
+    }
+
+    public function getRecoveryCooldownPath(): string {
+        return $this->recoveryCooldownFile;
+    }
 }

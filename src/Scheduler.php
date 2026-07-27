@@ -41,18 +41,21 @@ use function function_exists;
 use function gc_enable;
 use function gc_enabled;
 use function hrtime;
-use function max;
-use function memory_get_peak_usage;
-use function number_format;
-use function opcache_get_status;
 use function json_encode;
 use function memory_get_usage;
 use function count;
 use function get_class;
-use function gc_collect_cycles;
-use function gc_mem_caches;
+use function opcache_get_status;
 use function random_bytes;
 use function round;
+use function file_exists;
+use function touch;
+use function unlink;
+use function dirname;
+use function basename;
+use function sleep;
+use function file_put_contents;
+use function file_get_contents;
 
 use const SIGINT;
 use const SIGTERM;
@@ -114,6 +117,18 @@ class Scheduler implements LoggerAwareInterface {
      * @var string Filename to save state to
      */
     protected string $saveFileName = '/tmp/php-ec-savepoint';
+
+    /** @var string Recovery marker file path */
+    protected string $recoveryMarkerFile = '';
+
+    /** @var int Max consecutive recovery attempts before halting */
+    const MAX_RECOVERY_ATTEMPTS = 3;
+
+    /** @var int Cooldown seconds after failed recovery before allowing retry */
+    const RECOVERY_COOLDOWN_SECONDS = 60;
+
+    /** @var string Timestamp file for recovery cooldown */
+    protected string $recoveryCooldownFile = '';
 
     /**
      * @var bool Flag if the scheduler has information that needs to be flushed to the save file.
@@ -352,6 +367,7 @@ class Scheduler implements LoggerAwareInterface {
 
         $ec->once('action.failed', function($action, $exception) {
             if ($this->state->state() === State::RECOVERY) {
+                $this->setRecoveryCooldown();
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });
@@ -367,6 +383,7 @@ class Scheduler implements LoggerAwareInterface {
         $ec->once('process.error', function($actionName, $error) {
             //Only call shutdown once if we fail during recovery
             if ($this->state->state() === State::RECOVERY) {
+                $this->setRecoveryCooldown();
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });
@@ -453,6 +470,88 @@ class Scheduler implements LoggerAwareInterface {
     public function setSavefileName(string $filename) : void
     {
         $this->saveFileName = $filename;
+        $dir = dirname($filename);
+        $this->recoveryMarkerFile = $dir . '/.' . basename($filename) . '.recovery';
+        $this->recoveryCooldownFile = $dir . '/.' . basename($filename) . '.cooldown';
+    }
+
+    /**
+     * Check if a recovery marker file exists
+     */
+    protected function hasRecoveryMarker(): bool
+    {
+        return $this->recoveryMarkerFile !== '' && file_exists($this->recoveryMarkerFile);
+    }
+
+    /**
+     * Create the recovery marker file
+     */
+    protected function createRecoveryMarker(): void
+    {
+        if ($this->recoveryMarkerFile !== '') {
+            touch($this->recoveryMarkerFile);
+        }
+    }
+
+    /**
+     * Remove the recovery marker file
+     */
+    protected function clearRecoveryMarker(): void
+    {
+        if ($this->recoveryMarkerFile !== '' && file_exists($this->recoveryMarkerFile)) {
+            unlink($this->recoveryMarkerFile);
+        }
+        if ($this->recoveryCooldownFile !== '' && file_exists($this->recoveryCooldownFile)) {
+            unlink($this->recoveryCooldownFile);
+        }
+    }
+
+    /**
+     * Check if we're within cooldown period after a failed recovery
+     * @return int Seconds remaining in cooldown, 0 if no cooldown active
+     */
+    protected function getRecoveryCooldownRemaining(): int
+    {
+        if ($this->recoveryCooldownFile === '' || !file_exists($this->recoveryCooldownFile)) {
+            return 0;
+        }
+        $data = json_decode(file_get_contents($this->recoveryCooldownFile), true);
+        if (!is_array($data) || !isset($data['time'])) {
+            unlink($this->recoveryCooldownFile);
+            return 0;
+        }
+        $elapsed = time() - $data['time'];
+        if ($elapsed >= static::RECOVERY_COOLDOWN_SECONDS) {
+            unlink($this->recoveryCooldownFile);
+            return 0;
+        }
+        return static::RECOVERY_COOLDOWN_SECONDS - $elapsed;
+    }
+
+    /**
+     * Get the number of consecutive recovery attempts from the cooldown file
+     */
+    protected function getRecoveryAttemptCount(): int
+    {
+        if ($this->recoveryCooldownFile === '' || !file_exists($this->recoveryCooldownFile)) {
+            return 0;
+        }
+        $data = json_decode(file_get_contents($this->recoveryCooldownFile), true);
+        return $data['attempts'] ?? 0;
+    }
+
+    /**
+     * Set the recovery cooldown timer and increment attempt count
+     */
+    protected function setRecoveryCooldown(): void
+    {
+        if ($this->recoveryCooldownFile !== '') {
+            $attempts = $this->getRecoveryAttemptCount() + 1;
+            file_put_contents($this->recoveryCooldownFile, json_encode([
+                'time' => time(),
+                'attempts' => $attempts,
+            ]));
+        }
     }
 
     protected function setup_save_state() : void
@@ -592,6 +691,35 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Restore the state of the scheduler and engine */
         $this->saveStateHandler = new FileAdapter($this->saveFileName, $this->logger, $this->loop);
+
+        /** Check for recovery marker before restoring state */
+        if ($this->hasRecoveryMarker()) {
+            $this->logger->emergency("*** Guru Mediation Required ***. Recovery marker file detected - previous recovery attempt did not complete. Halting to prevent reboot loop.");
+            $this->logger->emergency("Remove marker file: {$this->recoveryMarkerFile}");
+            $this->logger->emergency("Or check logs to determine why recovery failed.");
+            // Don't exit - that would trigger systemd/docker restart
+            // Sleep indefinitely until operator intervenes
+            while (true) {
+                sleep(60);
+            }
+        }
+
+        /** Check for recovery cooldown */
+        $cooldownRemaining = $this->getRecoveryCooldownRemaining();
+        if ($cooldownRemaining > 0) {
+            $attempts = $this->getRecoveryAttemptCount();
+            if ($attempts >= static::MAX_RECOVERY_ATTEMPTS) {
+                $this->createRecoveryMarker();
+                $this->logger->emergency("Recovery failed {$attempts} times consecutively. Creating marker and halting.");
+                $this->logger->emergency("Remove marker file: {$this->recoveryMarkerFile}");
+                while (true) {
+                    sleep(60);
+                }
+            }
+            $this->logger->warning("Recovery cooldown active (attempt {$attempts}/" . static::MAX_RECOVERY_ATTEMPTS . "). Waiting {$cooldownRemaining} seconds...");
+            sleep($cooldownRemaining);
+        }
+
         $this->restoreState();
 
         /**
@@ -638,6 +766,7 @@ class Scheduler implements LoggerAwareInterface {
             //Function based actions will run straight away and may error again (@TODO: Can we delay function based actions)
             $this->erroredActionCommands = [];
             $this->logger->notice('Beginning failed action recovery process');
+            $this->createRecoveryMarker();
             $this->state->transition(State::RECOVERY);
             $retryable = [];
             foreach($erroredActions as $errored) {
@@ -654,6 +783,7 @@ class Scheduler implements LoggerAwareInterface {
                 $this->actionExecutionCoordinator->once('idle', function () {
                     if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
                         $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
+                        $this->clearRecoveryMarker();
                         $this->state->transition(State::STARTING);
                         $this->saveStateHandler->saveStateSync($this->buildState());
                         $this->sourceExecutionCoordinator->initialise_input_processes();
@@ -665,6 +795,7 @@ class Scheduler implements LoggerAwareInterface {
                 }
             } else {
                 //No actions were retryable so we continue with booting the Scheduler
+                $this->clearRecoveryMarker();
                 $this->state->transition(State::STARTING);
                 $this->saveStateHandler->saveStateSync($this->buildState());
                 $this->sourceExecutionCoordinator->initialise_input_processes();
