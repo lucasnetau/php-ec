@@ -13,6 +13,9 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use EdgeTelemetrics\EventCorrelation\Library\EventLog;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryEngine;
+use EdgeTelemetrics\EventCorrelation\Memory\JsonFileBackend;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryWrite;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ActionExecutionCoordinator;
@@ -87,6 +90,11 @@ class Scheduler implements LoggerAwareInterface {
     protected CorrelationEngine $engine;
 
     /**
+     * @var MemoryEngine Collective Memory engine
+     */
+    protected MemoryEngine $collectiveMemory;
+
+    /**
      * @var string[] Class list of rules
      */
     protected array $rules = [];
@@ -130,6 +138,9 @@ class Scheduler implements LoggerAwareInterface {
 
     /** @var string Timestamp file for recovery cooldown */
     protected string $recoveryCooldownFile = '';
+
+    /** @var ?string Path to memory preload script */
+    protected ?string $memoryPreloadScript = null;
 
     /**
      * @var bool Flag if the scheduler has information that needs to be flushed to the save file.
@@ -253,6 +264,7 @@ class Scheduler implements LoggerAwareInterface {
         $this->sourceExecutionCoordinator->setLogger($logger);
         $this->metricsCollector->setLogger($this->logger);
         $this->memoryManager->setLogger($logger);
+        $this->collectiveMemory->setLogger($logger);
     }
 
     /**
@@ -266,6 +278,11 @@ class Scheduler implements LoggerAwareInterface {
         $this->rules = $rules;
         /** Initialise the Correlation Engine */
         $this->engine = new CorrelationEngine($this->rules);
+
+        /** Initialise the Collective Memory Engine */
+        $this->collectiveMemory = new MemoryEngine();
+        $this->engine->setMemoryEngine($this->collectiveMemory);
+
         $this->initialiseActionExecution();
         $this->initialiseSourceExecution();
         $this->metricsCollector = new MetricsCollector();
@@ -479,6 +496,46 @@ class Scheduler implements LoggerAwareInterface {
         $dir = dirname($filename);
         $this->recoveryMarkerFile = $dir . '/.' . basename($filename) . '.recovery';
         $this->recoveryCooldownFile = $dir . '/.' . basename($filename) . '.cooldown';
+
+        $memoryFile = $dir . '/.' . basename($filename) . '.memory.json';
+        $this->collectiveMemory = new MemoryEngine(new JsonFileBackend($memoryFile));
+        $this->collectiveMemory->setLogger($this->logger);
+        $this->engine->setMemoryEngine($this->collectiveMemory);
+    }
+
+    /**
+     * @param string $script Path to a PHP script that returns MemoryWrite[]
+     */
+    public function setMemoryPreloadScript(string $script): void
+    {
+        $this->memoryPreloadScript = $script;
+    }
+
+    /**
+     * Execute the memory preload script if configured.
+     * The script must return an array of MemoryWrite objects.
+     */
+    protected function runMemoryPreloadScript(): void
+    {
+        if ($this->memoryPreloadScript === null) {
+            return;
+        }
+
+        if (!file_exists($this->memoryPreloadScript)) {
+            throw new \RuntimeException("Memory preload script not found: {$this->memoryPreloadScript}");
+        }
+
+        $writes = require $this->memoryPreloadScript;
+
+        if (!is_array($writes)) {
+            throw new \RuntimeException("Memory preload script must return an array of MemoryWrite objects");
+        }
+
+        $this->collectiveMemory->applyWrites($writes);
+        $this->logger->info("Memory preloaded from {script} ({count} entries)", [
+            'script' => $this->memoryPreloadScript,
+            'count' => count($writes),
+        ]);
     }
 
     /**
@@ -583,6 +640,7 @@ class Scheduler implements LoggerAwareInterface {
                 $this->engine->clearDirtyFlag();
                 $this->dirty = false;
                 $skipCount = 0;
+                $this->collectiveMemory->persist();
                 $this->saveStateHandler->saveStateAsync($this->buildState());
             } else if ($this->saveStateHandler->asyncSaveInProgress()) {
                 if ((++$skipCount % 5) === 0) {
@@ -610,6 +668,7 @@ class Scheduler implements LoggerAwareInterface {
         return [
             'engine' => $this->engine->getState(),
             'scheduler' => $this->getState(),
+            'memory' => $this->collectiveMemory->getState(),
         ];
     }
 
@@ -648,6 +707,9 @@ class Scheduler implements LoggerAwareInterface {
             try {
                 $this->setState($savedState['scheduler']);
                 $this->engine->setState($savedState['engine']);
+                if (isset($savedState['memory'])) {
+                    $this->collectiveMemory->setState($savedState['memory']);
+                }
             } catch (Throwable $ex) {
                 $this->logger->emergency("A fatal exception was thrown while loading previous saved state.", ['exception' => $ex]);
                 $this->panic($ex);
@@ -655,6 +717,9 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->debug("Successfully loaded from saved state");
         }
         unset($savedState);
+
+        /** Load persistent memory from backend */
+        $this->collectiveMemory->loadFromBackend();
 
         /** Force a run of the PHP GC and release caches. This helps clear out memory consumed by restoring state from a large json file */
         $this->memoryManager->reclaim();
@@ -728,6 +793,9 @@ class Scheduler implements LoggerAwareInterface {
 
         $this->restoreState();
 
+        /** Pre-warm collective memory from configured script */
+        $this->runMemoryPreloadScript();
+
         /**
          * An event has been emitted by a Rule
          * If the Scheduler has been configured to persist new events via setting newEventAction then we wrap this in the defined Action and emit it via the Engine,
@@ -747,6 +815,9 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Handle request to run an action */
         $this->engine->on('action', $this->handleAction(...));
+
+        /** Handle Memory Write */
+        $this->engine->on('memory', $this->collectiveMemory->applyWrite(...));
 
         /** Handle request to run an on demand source */
         $this->engine->on('source', function(Scheduler\Messages\ExecuteSource $execute) {
@@ -837,6 +908,11 @@ class Scheduler implements LoggerAwareInterface {
 
         //Log stats coming from the Correlation Engine
         $this->engine->on('stat', $this->metricsCollector->set(...));
+
+        /** Purge expired collective memory entries every 30 seconds */
+        $this->loop->addPeriodicTimer(30, function() {
+            $this->collectiveMemory->purgeExpired();
+        });
 
         /** Monitor memory usage */
         $this->memoryManager->initialise();
@@ -951,6 +1027,7 @@ class Scheduler implements LoggerAwareInterface {
             }
             $this->logger->debug("Event Loop stopped");
             if (isset($this->saveStateHandler)) {
+                $this->collectiveMemory->persist();
                 $this->saveStateHandler->saveStateSync($this->buildState()); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
                 unset($this->saveStateHandler);
             }

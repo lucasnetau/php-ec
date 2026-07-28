@@ -17,6 +17,7 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\IEvent;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryInterface;
 use Evenement\EventEmitterTrait;
 use Exception;
 use RuntimeException;
@@ -106,6 +107,11 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
     protected ?DateTimeInterface $timeout = null;
 
     /**
+     * @var ?MemoryInterface Read-only access to Collective Memory
+     */
+    private ?MemoryInterface $memory = null;
+
+    /**
      * @var string[] Used when loading a serialised event processor (two step pass)
      */
     protected array $unresolved_events;
@@ -132,6 +138,23 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
     public function __construct() {
         $this->instanceId = $this->generateInstanceId();
+    }
+
+    /**
+     * Inject Collective Memory read access.
+     * Called by CorrelationEngine during matcher construction.
+     */
+    public function setMemory(MemoryInterface $memory): void
+    {
+        $this->memory = $memory;
+    }
+
+    /**
+     * Get read-only access to Collective Memory.
+     */
+    public function memory(): ?MemoryInterface
+    {
+        return $this->memory;
     }
 
     protected function generateInstanceId() : string {

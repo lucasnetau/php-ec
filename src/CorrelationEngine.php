@@ -15,6 +15,8 @@ use DateInterval;
 use DateTimeImmutable;
 use EdgeTelemetrics\EventCorrelation\Clocks\BatchClock;
 use EdgeTelemetrics\EventCorrelation\Clocks\TickClock;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryInterface;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryWrite;
 use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
 use EdgeTelemetrics\EventCorrelation\Scheduler\Messages\ExecuteSource;
 use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
@@ -106,9 +108,12 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
         'event' => Event::class,
         'action' => Action::class,
         'source' => ExecuteSource::class,
+        'memory' => MemoryWrite::class,
     ];
 
     protected array $matcherConstructor = [];
+
+    protected ?MemoryInterface $memoryEngine = null;
 
     /**
      * @var ?TimerInterface
@@ -356,6 +361,9 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
             /** @var IEventGenerator|IActionGenerator $matcher */
             $matcher->on('data', [$this, 'handleEmit']);
         }
+        if ($this->memoryEngine !== null && $matcher instanceof AEventProcessor) {
+            $matcher->setMemory($this->memoryEngine);
+        }
     }
 
     /**
@@ -396,6 +404,23 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
         }
 
         $this->emitMapping[$emit_name] = $className;
+    }
+
+    /**
+     * Set the Memory Engine for Collective Memory support.
+     * Rules will receive a read-only MemoryInterface via their memory property.
+     */
+    public function setMemoryEngine(MemoryInterface $engine): void
+    {
+        $this->memoryEngine = $engine;
+    }
+
+    /**
+     * Get the Memory Engine instance.
+     */
+    public function getMemoryEngine(): ?MemoryInterface
+    {
+        return $this->memoryEngine;
     }
 
     /**
