@@ -17,12 +17,16 @@ use function dirname;
 use function file_exists;
 use function file_put_contents;
 use function file_get_contents;
+use function gzdecode;
+use function gzencode;
 use function is_dir;
 use function is_readable;
 use function is_writable;
 use function json_decode;
 use function json_encode;
 use function mkdir;
+use function str_starts_with;
+use function strlen;
 
 use const JSON_PRETTY_PRINT;
 use const JSON_THROW_ON_ERROR;
@@ -50,6 +54,13 @@ class JsonFileBackend implements MemoryBackendInterface
         $json = @file_get_contents($this->filePath);
         if ($json === false || $json === '') {
             return [];
+        }
+
+        if (str_starts_with($json, "\x1f\x8b")) {
+            $json = gzdecode($json);
+            if ($json === false) {
+                return [];
+            }
         }
 
         try {
@@ -91,6 +102,7 @@ class JsonFileBackend implements MemoryBackendInterface
         }
 
         $json = json_encode($data, JSON_THROW_ON_ERROR);
-        file_put_contents($this->filePath, $json, LOCK_EX);
+        $compressed = gzencode($json, 2);
+        file_put_contents($this->filePath, $compressed, LOCK_EX);
     }
 }
