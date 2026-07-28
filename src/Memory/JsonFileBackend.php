@@ -47,12 +47,17 @@ class JsonFileBackend implements MemoryBackendInterface
             throw new RuntimeException("Memory backend file is not readable: {$this->filePath}");
         }
 
-        $json = file_get_contents($this->filePath);
+        $json = @file_get_contents($this->filePath);
         if ($json === false || $json === '') {
             return [];
         }
 
-        $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        try {
+            $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return [];
+        }
+
         if (!is_array($data)) {
             return [];
         }
@@ -85,7 +90,7 @@ class JsonFileBackend implements MemoryBackendInterface
             $data[] = $entry->jsonSerialize();
         }
 
-        $json = json_encode($data, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+        $json = json_encode($data, JSON_THROW_ON_ERROR);
         file_put_contents($this->filePath, $json, LOCK_EX);
     }
 }

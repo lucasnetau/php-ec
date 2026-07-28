@@ -196,6 +196,19 @@ class MemoryTest extends TestCase
         }
     }
 
+    public function testJsonFileBackendLoadCorruptedReturnsEmpty(): void
+    {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
+        try {
+            file_put_contents($tmpFile, '{not valid json[[[');
+            $backend = new JsonFileBackend($tmpFile);
+            $loaded = $backend->load();
+            $this->assertCount(0, $loaded);
+        } finally {
+            @unlink($tmpFile);
+        }
+    }
+
     public function testMemoryEngineWithBackend(): void
     {
         $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
