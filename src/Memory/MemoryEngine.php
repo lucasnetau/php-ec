@@ -29,6 +29,7 @@ class MemoryEngine implements MemoryInterface, LoggerAwareInterface
 
     private ArrayMemory $store;
     private ?MemoryBackendInterface $backend;
+    private bool $dirty = false;
 
     public function __construct(?MemoryBackendInterface $backend = null)
     {
@@ -74,6 +75,7 @@ class MemoryEngine implements MemoryInterface, LoggerAwareInterface
         );
 
         $this->store->set($entry);
+        $this->dirty = true;
     }
 
     /**
@@ -126,7 +128,7 @@ class MemoryEngine implements MemoryInterface, LoggerAwareInterface
      */
     public function persist(): void
     {
-        if ($this->backend === null) {
+        if ($this->backend === null || !$this->dirty) {
             return;
         }
 
@@ -134,7 +136,18 @@ class MemoryEngine implements MemoryInterface, LoggerAwareInterface
         $persistent = array_values(array_filter($all, fn(MemoryEntry $e) => $e->persistent));
 
         $this->backend->save($persistent);
+        $this->dirty = false;
         $this->logger->debug("Memory engine persisted {count} entries", ['count' => count($persistent)]);
+    }
+
+    public function isDirty(): bool
+    {
+        return $this->dirty;
+    }
+
+    public function clearDirtyFlag(): void
+    {
+        $this->dirty = false;
     }
 
     /**

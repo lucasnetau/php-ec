@@ -209,6 +209,32 @@ class MemoryTest extends TestCase
         }
     }
 
+    public function testJsonFileBackendCompressedRoundTrip(): void
+    {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
+        try {
+            $backend = new JsonFileBackend($tmpFile);
+            $entries = [
+                new MemoryEntry('sensor/42', 'compressor', true, null, true),
+                new MemoryEntry('sensor/42', 'mode', 'cooling', null, true),
+            ];
+
+            $backend->save($entries);
+
+            // Verify file is gzip-compressed
+            $raw = file_get_contents($tmpFile);
+            $this->assertStringStartsWith("\x1f\x8b", $raw, 'File should be gzip-compressed');
+
+            // Verify load still works
+            $loaded = $backend->load();
+            $this->assertCount(2, $loaded);
+            $this->assertTrue($loaded[0]->value);
+            $this->assertSame('cooling', $loaded[1]->value);
+        } finally {
+            @unlink($tmpFile);
+        }
+    }
+
     public function testMemoryEngineWithBackend(): void
     {
         $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
