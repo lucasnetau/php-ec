@@ -54,7 +54,8 @@ class ClosureActionWrapper implements LoggerAwareInterface {
                         $resolve($result);
                     }
                 } catch (\Throwable $e) {
-                    $reject(new RuntimeException($e->getMessage(), $e->getCode(), $e));
+                    $ref = new ReflectionFunction($this->closure);
+                    $reject(new RuntimeException("Action closure at {$ref->getFileName()}:{$ref->getStartLine()} threw: " . $e->getMessage(), $e->getCode(), $e));
                 }
             });
         };
