@@ -246,7 +246,6 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $this->inflightActionClosures[$promise] = $action->getVars(); //Keep track of promises so we can cancel on shutdown
                 $promise->then(function ($result) use ($actionName, $action, $cmd, $promise) {
                     $this->inflightActionClosures->offsetUnset($promise);
-                    $this->logger?->debug('Process Output', ['result' => $result]);
                     $this->emit('action.completed', ['action' => $action, ]);
                     $action->emit('completed', []);
                     /** @TODO: Accounting? */
