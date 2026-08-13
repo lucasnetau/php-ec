@@ -34,6 +34,77 @@ class SchedulerRecoveryTests extends TestCase
         return $scheduler;
     }
 
+    public function testRecoveryReplaysActionsInBatches(): void
+    {
+        $scheduler = new class([]) extends ObservableScheduler {
+            const RECOVERY_ACTION_BATCH_SIZE = 2;
+        };
+        $tempState = tempnam(sys_get_temp_dir(), 'php-ec-test-state-');
+        if ($tempState !== false) {
+            unlink($tempState);
+        }
+        $scheduler->setSavefileName($tempState);
+        $scheduler->setSaveStateInterval(600);
+        $logger = new TestLogger();
+        $scheduler->setLogger($logger);
+
+        $inflight = [];
+        for ($i = 0; $i < 6; $i++) {
+            $inflight["test-$i"] = ['cmd' => 'replay_job', 'vars' => ['n' => $i]];
+        }
+        $state = [
+            'engine' => [
+                'eventstream_live' => true,
+                'matchers' => [],
+                'events' => [],
+                'statistics' => ['seen' => [], 'init_matcher' => [], 'handled' => []],
+            ],
+            'scheduler' => [
+                'input' => ['checkpoints' => []],
+                'actions' => ['inflight' => $inflight, 'errored' => []],
+            ],
+        ];
+        file_put_contents($tempState, json_encode($state));
+
+        $running = 0;
+        $peak = 0;
+        $completed = 0;
+        $scheduler->register_action('replay_job', function ($n = null) use (&$running, &$peak, &$completed) {
+            $running++;
+            $peak = max($peak, $running);
+            $def = new \React\Promise\Deferred();
+            Loop::addTimer(0.05, function () use ($def, &$running, &$completed) {
+                $running--;
+                $completed++;
+                $def->resolve('ok');
+            });
+            return $def->promise();
+        });
+
+        $progress = [];
+        $scheduler->on('recovery', function() use (&$progress) {
+            $progress[] = 'recovery';
+        });
+        $scheduler->on('running', function() use (&$progress, $scheduler) {
+            $progress[] = 'running';
+            Loop::futureTick($scheduler->shutdown(...));
+        });
+        $scheduler->on('stopping', function() use (&$progress) {
+            $progress[] = 'stopping';
+        });
+        $scheduler->on('stopped', function() use (&$progress) {
+            $progress[] = 'stopped';
+        });
+
+        Loop::addTimer(5, $scheduler->exit(...)); //Die after 5 seconds
+
+        $scheduler->run();
+
+        $this->assertSame(6, $completed, "Not all replayed actions completed");
+        $this->assertLessThanOrEqual(2, $peak, "More than RECOVERY_ACTION_BATCH_SIZE actions were running concurrently");
+        $this->assertSame(['recovery','running','stopping','stopped'], $progress, "Scheduler state transitions not expected");
+    }
+
     public function testRecoveryCompletesAndResumesNormalOperation(): void
     {
         $rule = new class() extends Rule\MatchSingle {

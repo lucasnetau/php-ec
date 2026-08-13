@@ -15,7 +15,6 @@ use EdgeTelemetrics\EventCorrelation\Library\EventLog;
 use EdgeTelemetrics\EventCorrelation\Management\Server;
 use EdgeTelemetrics\EventCorrelation\Memory\MemoryEngine;
 use EdgeTelemetrics\EventCorrelation\Memory\JsonFileBackend;
-use EdgeTelemetrics\EventCorrelation\Memory\MemoryWrite;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\FileAdapter;
 use EdgeTelemetrics\EventCorrelation\SaveHandler\SaveHandlerInterface;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ActionExecutionCoordinator;
@@ -198,6 +197,9 @@ class Scheduler implements LoggerAwareInterface {
 
     /** @var int Level at which outstanding action mitigation action is resolved */
     const RUNNING_ACTION_LIMIT_LOW_WATERMARK = 500;
+
+    /** @var int Max replayed actions held in-flight at once during recovery */
+    const RECOVERY_ACTION_BATCH_SIZE = 100;
 
     /** @var string|null */
     protected ?string $newEventAction = null;
@@ -617,6 +619,35 @@ class Scheduler implements LoggerAwareInterface {
         }
     }
 
+    /**
+     * Replay errored actions in batches. Each batch is dispatched only after the previous
+     * batch has fully completed (idle), so the action processes are never overwhelmed.
+     * Resumes normal operations once the final batch has completed.
+     *
+     * @param array<Action> $actions
+     */
+    protected function replayActions(array $actions): void
+    {
+        $dispatchBatch = function () use (&$dispatchBatch, &$actions) {
+            $batch = array_splice($actions, 0, static::RECOVERY_ACTION_BATCH_SIZE);
+            $this->logger->debug("Emitting recovery batch of " . count($batch) . " actions");
+            foreach ($batch as $action) {
+                $this->engine->emit('action', [$action]);
+            }
+            $this->actionExecutionCoordinator->once('idle', $actions ? $dispatchBatch : function () {
+                if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
+                    $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
+                    $this->clearRecoveryMarker();
+                    $this->state->transition(State::STARTING);
+                    $this->saveStateHandler->saveStateSync($this->buildState());
+                    $this->sourceExecutionCoordinator->initialise_input_processes();
+                    $this->state->transition(State::RUNNING);
+                }
+            });
+        };
+        $this->loop->futureTick($dispatchBatch);
+    }
+
     protected function setup_save_state() : void
     {
         /**
@@ -857,19 +888,8 @@ class Scheduler implements LoggerAwareInterface {
                 $retryable[] = new Action($errored['action']['cmd'], $errored['action']['vars']);
             }
             if ($retryable) {
-                $this->actionExecutionCoordinator->once('idle', function () {
-                    if ($this->state->state() === State::RECOVERY && count($this->erroredActionCommands) === 0) {
-                        $this->logger->info('Replay of errored actions completed successfully. Resuming normal operations');
-                        $this->clearRecoveryMarker();
-                        $this->state->transition(State::STARTING);
-                        $this->saveStateHandler->saveStateSync($this->buildState());
-                        $this->sourceExecutionCoordinator->initialise_input_processes();
-                        $this->state->transition(State::RUNNING);
-                    }
-                });
-                foreach($retryable as $action) {
-                    $this->engine->emit('action', [$action]);
-                }
+                unset($erroredActions);
+                $this->replayActions($retryable);
             } else {
                 //No actions were retryable so we continue with booting the Scheduler
                 $this->clearRecoveryMarker();
