@@ -228,7 +228,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
 
             //Validate the parameters before calling
             if ($config['schema']) {
-                $params = (object)$action->getVars();
+                $params = json_decode(json_encode($action->getVars()), false);
                 $validator = new \JsonSchema\Validator;
                 if ($validator->validate($params, $config['schema'], Constraint::CHECK_MODE_VALIDATE_SCHEMA) !== \JsonSchema\Validator::ERROR_NONE) {
                     $this->logger->error("Invalid parameters for action $actionName", ['errors' => $validator->getErrors()]);
