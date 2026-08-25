@@ -242,7 +242,8 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $cmd = new ClosureActionWrapper($config['cmd'], $this->logger);
                 $this->emit('action.started', ['action' => $action, ]);
                 $action->emit('started');
-                $promise = $cmd($action->getVars());
+                $vars = json_decode(json_encode($action->getVars()), true); //Simulate JsonRPC encode/decode cycle
+                $promise = $cmd($vars);
                 $this->inflightActionClosures[$promise] = $action->getVars(); //Keep track of promises so we can cancel on shutdown
                 $promise->then(function ($result) use ($actionName, $action, $cmd, $promise) {
                     $this->inflightActionClosures->offsetUnset($promise);
