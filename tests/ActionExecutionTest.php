@@ -9,7 +9,6 @@ use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use PHPUnit\Framework\TestCase;
 use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
-use function count;
 use function sys_get_temp_dir;
 use function tempnam;
 use function unlink;
@@ -154,7 +153,8 @@ class ActionExecutionTest extends TestCase {
 
         $erroredActions = $scheduler->getErroredActions();
         $this->assertCount(1, $erroredActions);
-        $this->assertEquals('closureAction threw',  $erroredActions[0]['error']['message']);
+        $this->assertStringStartsWith('Action closure at ',  $erroredActions[0]['error']['message']);
+        $this->assertStringEndsWith('threw: closureAction threw',  $erroredActions[0]['error']['message']);
     }
 
     /** @small */
