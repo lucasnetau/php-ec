@@ -12,6 +12,7 @@
 namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 
 use Clue\React\Zlib\Decompressor;
+use DeflateContext;
 use EdgeTelemetrics\EventCorrelation\Action;
 use EdgeTelemetrics\EventCorrelation\Library\Histogram;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
@@ -33,6 +34,7 @@ use function array_key_exists;
 use function array_keys;
 use function bin2hex;
 use function count;
+use function deflate_init;
 use function is_callable;
 use function is_string;
 use function json_encode;
@@ -71,7 +73,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
     /** @var array<string, array{uncompressed: Histogram, compressed: ?Histogram}> */
     protected array $actionStdoutPacketSizes = [];
 
-    /** @var array<string, resource> */
+    /** @var array<string, DeflateContext> */
     protected array $deflateContexts = [];
 
     public function __construct() {
@@ -118,7 +120,10 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $process->stdout->pipe($decompressor);
                 $process->stdout = $decompressor;
 
-                $this->deflateContexts[$actionName] = deflate_init(ZLIB_ENCODING_RAW, ['level' => -1]);
+                $context = deflate_init(ZLIB_ENCODING_RAW, ['level' => -1]);
+                if ($context instanceof \DeflateContext) { //Ignore if deflate cannot be initialised
+                    $this->deflateContexts[$actionName] = $context;
+                }
             }
 
             $process->stderr->on('data', function ($data) use ($actionName) {
