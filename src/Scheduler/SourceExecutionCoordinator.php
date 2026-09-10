@@ -307,6 +307,7 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
             if (!$this->isStopping() && $process->isRunning()) {
                 //Use a timer to get around a race condition in Alpine linux where the process hasn't been reaped yet (SIGCHLD delayed?)
                 $this->loop->addTimer(0.1, function() use ($id, $process) {
+                    // @phpstan-ignore if.alwaysTrue
                     if ($process->isRunning()) {
                         $this->logger->critical("{id} STDOUT closed unexpectedly, terminating process", ['id' => $id,]);
                         $process->terminate(SIGTERM);

@@ -727,6 +727,7 @@ class Scheduler implements LoggerAwareInterface {
     protected function restoreState() : void
     {
         /** Load State from save file */
+        $savedState = false;
         try {
             $savedState = $this->saveStateHandler->loadState();
         } catch (RuntimeException $ex) {
@@ -802,6 +803,7 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->emergency("Or check logs to determine why recovery failed.");
             // Don't exit - that would trigger systemd/docker restart
             // Sleep indefinitely until operator intervenes
+            // @phpstan-ignore while.alwaysTrue
             while (true) {
                 sleep(60);
             }
