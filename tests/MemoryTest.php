@@ -257,6 +257,32 @@ class MemoryTest extends TestCase
         }
     }
 
+    public function testLoadFromBackendMergesWithRestoredState(): void
+    {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
+        try {
+            $backend = new JsonFileBackend($tmpFile);
+            $backend->save([
+                new MemoryEntry('sensor/42', 'type', 'freezer', null, true),
+                new MemoryEntry('sensor/42', 'mode', 'stale-from-backend', null, true),
+            ]);
+
+            $snapshot = new MemoryEngine();
+            $snapshot->applyWrite(new MemoryWrite('sensor/42', 'mode', 'cooling', persistent: true));
+            $snapshot->applyWrite(new MemoryWrite('sensor/42', 'compressor', true, persistent: false));
+
+            $engine = new MemoryEngine($backend);
+            $engine->setState($snapshot->getState());
+            $engine->loadFromBackend();
+
+            $this->assertTrue($engine->has('sensor/42', 'compressor'), 'ephemeral snapshot entry must survive');
+            $this->assertSame('cooling', $engine->get('sensor/42', 'mode'), 'snapshot value must win over backend');
+            $this->assertSame('freezer', $engine->get('sensor/42', 'type'), 'backend-only entry must be loaded');
+        } finally {
+            @unlink($tmpFile);
+        }
+    }
+
     public function testMemoryWriteJsonSerialize(): void
     {
         $write = new MemoryWrite('sensor/42/state', 'compressor', true, ttl: 300, persistent: true);

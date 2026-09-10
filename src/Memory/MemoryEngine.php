@@ -113,13 +113,19 @@ class MemoryEngine implements MemoryInterface, LoggerAwareInterface
         }
 
         $entries = $this->backend->load();
-        $loaded = count($entries);
 
-        // Filter out expired entries on load
-        $valid = array_filter($entries, fn(MemoryEntry $e) => !$e->isExpired());
-        $this->store->populate($valid);
+        // Merge backend entries into memory without overwriting entries already
+        // restored from the saved state snapshot, which is the more recent knowledge.
+        $loaded = 0;
+        foreach ($entries as $entry) {
+            if ($entry->isExpired() || $this->store->has($entry->namespace, $entry->key)) {
+                continue;
+            }
+            $this->store->set($entry);
+            $loaded++;
+        }
 
-        $this->logger->debug("Memory engine loaded {count} entries from backend", ['count' => count($valid)]);
+        $this->logger->debug("Memory engine loaded {count} entries from backend", ['count' => $loaded]);
     }
 
     /**

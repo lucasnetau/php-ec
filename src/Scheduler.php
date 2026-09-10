@@ -686,6 +686,7 @@ class Scheduler implements LoggerAwareInterface {
             if (false === $this->saveStateHandler->asyncSaveInProgress()) {
                 $this->engine->clearDirtyFlag();
                 $this->dirty = false;
+                $this->collectiveMemory->persist();
                 $this->saveStateHandler->saveStateAsync($this->buildState());
             }
         });
