@@ -52,6 +52,8 @@ class JsonRpcLogger extends AbstractLogger
     /** @var resource|WritableStreamInterface */
     private $stream;
 
+    private bool $ownsStream = false;
+
     /**
      * @param string $logLevel The log level above which messages will be logged. Messages under this log level will be ignored.
      * @param resource|string|WritableStreamInterface $stream If unsure leave the default value.
@@ -111,6 +113,7 @@ class JsonRpcLogger extends AbstractLogger
         if (! $this->stream) {
             throw new \RuntimeException('Unable to open stream ' . $this->url);
         }
+        $this->ownsStream = true;
     }
 
     private function write(JsonRpcNotification $message) {
@@ -179,9 +182,7 @@ class JsonRpcLogger extends AbstractLogger
     }
 
     public function __destruct() {
-        if ($this->stream instanceof WritableStreamInterface) {
-            $this->stream->end();
-        } else {
+        if ($this->ownsStream && is_resource($this->stream)) {
             fclose($this->stream);
         }
     }
