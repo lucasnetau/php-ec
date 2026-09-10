@@ -7,12 +7,14 @@ use EdgeTelemetrics\EventCorrelation\Library\Source\GeneratorSource;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ObservableScheduler;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
-use EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor;
 use Generator;
 use PHPUnit\Framework\TestCase;
-use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
 use function EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd;
+use function file_put_contents;
+use function json_encode;
+use function mt_rand;
+use function mt_srand;
 use function sys_get_temp_dir;
 use function tempnam;
 use function unlink;
@@ -114,6 +116,61 @@ class SchedulerSourceTest extends TestCase {
         $scheduler->run();
 
         $this->assertEquals(['Good'], $inputEvents);
+    }
+
+    /**
+     * @small
+     */
+    public function testSchedulerSurvivesFuzzedEventPayloads() : void {
+        $scheduler = $this->buildObservableScheduler();
+        $scheduler->setLogger(new TestLogger());
+
+        mt_srand(0xF0F0);
+        $payloads = [];
+        $expected = [];
+        for ($i = 0; $i < 100; $i++) {
+            $name = 'Fuzz:' . $i;
+            switch ($i % 5) {
+                case 0:
+                    $payloads[] = ['event' => $name, 'value' => mt_rand(0, 1000)];
+                    $expected[] = $name;
+                    break;
+                case 1:
+                    $payloads[] = ['event' => $name, 'datetime' => mt_rand(0, 2_000_000_000)];
+                    $expected[] = $name;
+                    break;
+                case 2:
+                    $payloads[] = ['event' => $name, 'datetime' => '2024-01-02T03:04:05+00:00'];
+                    $expected[] = $name;
+                    break;
+                case 3:
+                    $payloads[] = ['event' => $name, 'datetime' => 'not-a-date'];
+                    break;
+                case 4:
+                    $payloads[] = ['id' => $i, 'datetime' => '2024-01-02T03:04:05+00:00'];
+                    break;
+            }
+        }
+
+        $fuzzFile = tempnam(sys_get_temp_dir(), 'php-ec-fuzz-events-');
+        file_put_contents($fuzzFile, json_encode($payloads));
+
+        try {
+            $scheduler->register_input_process('fuzz', wrap_source_php_cmd(__DIR__ . '/scripts/Source/FuzzEvents.php', true), env: ['FUZZ_FILE' => $fuzzFile]);
+
+            $received = [];
+            $scheduler->setHandleEventCallback(function($event) use (&$received) {
+                if (str_starts_with($event->event, 'Fuzz:')) {
+                    $received[] = $event->event;
+                }
+            }, null);
+
+            $scheduler->run();
+        } finally {
+            @unlink($fuzzFile);
+        }
+
+        $this->assertSame($expected, $received, 'only well-formed fuzz events may reach the engine');
     }
 
     /**
