@@ -40,7 +40,9 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
     }
 
     /**
-     * @var null|array $env Set the environment for the source function or inherit if null
+     * @param null|array $env Set the environment for the source function or inherit if null
+     * @param mixed|null $checkpoint
+     * @return void
      */
     public function start(null|array $env = null, mixed $checkpoint = null): void
     {
