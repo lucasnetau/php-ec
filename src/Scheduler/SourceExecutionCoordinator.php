@@ -260,7 +260,16 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
                         $this->logger->critical("Input process did not give us an event array to handle. Received type: {type}, value: {value} ", ['type' => gettype($eventData), 'value' => json_encode($eventData),]);
                         return;
                     }
-                    $event = new Event($eventData);
+                    if (!is_string($eventData['event'] ?? null) || $eventData['event'] === '') {
+                        $this->logger->critical("Input process gave us an event without a valid name. Received value: {value} ", ['value' => json_encode($eventData),]);
+                        return;
+                    }
+                    try {
+                        $event = new Event($eventData);
+                    } catch (Throwable $ex) {
+                        $this->logger->critical("Input process gave us an invalid event: {message}. Received value: {value} ", ['message' => $ex->getMessage(), 'value' => json_encode($eventData),]);
+                        return;
+                    }
                     $this->emit('event', [$event]);
                     break;
                 case Scheduler::INPUT_ACTION_CHECKPOINT:

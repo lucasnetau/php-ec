@@ -91,6 +91,34 @@ class SchedulerSourceTest extends TestCase {
     /**
      * @small
      */
+    public function testSchedulerDropsMalformedEventsFromProcessSource() : void {
+        $scheduler = $this->buildObservableScheduler();
+
+        $logger = new TestLogger();
+        $scheduler->setLogger($logger);
+
+        $scheduler->register_input_process('test', wrap_source_php_cmd(__DIR__ . '/scripts/Source/MalformedEvent.php', true));
+
+        $inputEvents = [];
+        $scheduler->setHandleEventCallback(function($event) use (&$inputEvents) {
+            if (!in_array($event->event, [
+                Scheduler::CONTROL_MSG_NEW_STATE,
+                Scheduler::CONTROL_MSG_RESTORED_STATE,
+                Scheduler::CONTROL_MSG_STOP,
+                Scheduler::CONTROL_MSG_HEARTBEAT,
+            ], true)) {
+                $inputEvents[] = $event->event;
+            }
+        }, null);
+
+        $scheduler->run();
+
+        $this->assertEquals(['Good'], $inputEvents);
+    }
+
+    /**
+     * @small
+     */
     public function testSchedulerShutdownTerminatesSourceCleanly() : void {
         $scheduler = $this->buildObservableScheduler();
 
