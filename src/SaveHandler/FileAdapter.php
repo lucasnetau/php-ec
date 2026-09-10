@@ -26,6 +26,7 @@ use function file_put_contents;
 use function gzdecode;
 use function gzencode;
 use function hrtime;
+use function is_array;
 use function json_decode;
 use function json_encode;
 use function json_last_error;
@@ -226,7 +227,7 @@ class FileAdapter implements SaveHandlerInterface {
                 $this->logger->critical("Save state file was corrupted", ['exception' => $exception]);
                 throw new RuntimeException('Save state file was corrupted, Exiting.');
             }
-            return $state ?? false;
+            return is_array($state) ? $state : false;
         }
         return false;
 
