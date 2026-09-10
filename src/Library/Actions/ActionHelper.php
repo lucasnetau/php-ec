@@ -143,7 +143,7 @@ class ActionHelper extends EventEmitter {
                 SIGTERM => 'SIGTERM',
                 SIGKILL => 'SIGKILL',
             ];
-            $this->logger->log(LogLevel::DEBUG, "ActionHelper received signal " . $lookup[$signal] ?? $signal . "finishing up action...");
+            $this->logger->log(LogLevel::DEBUG, "ActionHelper received signal " . ($lookup[$signal] ?? (string)$signal) . " finishing up action...");
             $this->loop->futureTick(function () {
                 $this->emit(self::ACTION_SHUTDOWN);
             });
