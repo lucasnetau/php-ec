@@ -218,7 +218,7 @@ class FileAdapter implements SaveHandlerInterface {
             }
             try {
                 if (str_starts_with($contents, "\x1f\x8b")) { //GZIP header
-                    $state = json_decode(gzdecode($contents) ?: json_encode(null), true, flags: JSON_THROW_ON_ERROR);
+                    $state = json_decode(gzdecode($contents) ?: json_encode(false), true, flags: JSON_THROW_ON_ERROR);
                 } else {
                     $state = json_decode($contents, true, flags: JSON_THROW_ON_ERROR);
                 }
@@ -226,7 +226,7 @@ class FileAdapter implements SaveHandlerInterface {
                 $this->logger->critical("Save state file was corrupted", ['exception' => $exception]);
                 throw new RuntimeException('Save state file was corrupted, Exiting.');
             }
-            return $state;
+            return $state ?? false;
         }
         return false;
 
