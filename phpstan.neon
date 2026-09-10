@@ -1,5 +1,5 @@
 parameters:
-    phpVersion: 80000 # PHP 8.0
+    phpVersion: 80100 # PHP 8.1
     universalObjectCratesClasses:
         - EdgeTelemetrics\EventCorrelation\Event
         - EdgeTelemetrics\EventCorrelation\IEvent
