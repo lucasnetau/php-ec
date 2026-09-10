@@ -64,7 +64,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
     use EventEmitterTrait;
 
     /**
-     * @var array<string, IEventMatcher>
+     * @var IEventMatcher[]
      */
     protected array $eventProcessors = [];
 
@@ -78,7 +78,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
      */
     protected array $waitingForNextEvent = [];
 
-    /** @var array<string, array<string, mixed>>  */
+    /** @var array<int, array<string, mixed>>  */
     protected array $timeouts = [];
 
     protected bool $eventstream_live = false;
