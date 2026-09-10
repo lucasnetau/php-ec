@@ -142,8 +142,9 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
                 $this->matcherConstructor[$matcher[0]] = $matcher[1];
                 $matcher = $matcher[0];
             }
-            if (is_string($matcher) && !class_exists($matcher)) {
-                throw new RuntimeException('Invalid Rule class name: ' . $matcher);
+            $ruleClass = is_object($matcher) ? $matcher::class : $matcher;
+            if (!is_string($ruleClass) || !is_a($ruleClass, IEventMatcher::class, true)) {
+                throw new RuntimeException('Invalid Rule class name: ' . (is_string($ruleClass) ? $ruleClass : gettype($matcher)));
             }
             /** @var class-string<IEventMatcher> $eventname */
             foreach($matcher::initialAcceptedEvents() as $eventname) {

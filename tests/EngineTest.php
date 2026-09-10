@@ -22,6 +22,16 @@ class EngineTest extends TestCase {
         new CorrelationEngine(['NonExistentRuleClass']);
     }
 
+    public function testEngineThrowsOnClassThatIsNotAnEventMatcher() : void {
+        $this->expectException(\RuntimeException::class);
+        new CorrelationEngine([\stdClass::class]);
+    }
+
+    public function testEngineThrowsOnInstanceThatIsNotAnEventMatcher() : void {
+        $this->expectException(\RuntimeException::class);
+        new CorrelationEngine([new \stdClass()]);
+    }
+
     public function testEngineThrowsOnDuplicateRuleClassString(): void {
         $this->expectException(\RuntimeException::class);
         new CorrelationEngine([[TimeoutRule::class, []],[TimeoutRule::class, []]]);
