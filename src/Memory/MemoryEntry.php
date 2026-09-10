@@ -48,7 +48,7 @@ class MemoryEntry implements \JsonSerializable
             namespace: $data['namespace'],
             key: $data['key'],
             value: $data['value'],
-            expiresAt: isset($data['expiresAt']) && $data['expiresAt'] !== null
+            expiresAt: isset($data['expiresAt'])
                 ? new DateTimeImmutable($data['expiresAt'])
                 : null,
             persistent: $data['persistent'] ?? false,
