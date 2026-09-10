@@ -133,6 +133,9 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
      * @return Process|SourceFunction
      */
     public function initialise_input_process(int|string $id) : Process|SourceFunction {
+        if (!isset($this->input_processes_config[$id])) {
+            throw new \RuntimeException('Unknown input process ' . $id);
+        }
         $config = $this->input_processes_config[$id];
         if (is_subclass_of($config['cmd'], SourceFunction::class)) {
             return $this->setup_source_function($id);
@@ -170,13 +173,15 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
             $level = ($code === 0) ? LogLevel::INFO : LogLevel::ERROR;
             $this->logger->log($level,"Input Process {id} exited with code: {code}", ['id' => $id, 'code' => $code,]);
 
+            $config = $this->input_processes_config[$id] ?? null;
+
             /** Restart the input process if it exits with an error code */
-            if (!$this->isStopping() && $code === 0 && $this->input_processes_config[$id]['essential']) {
+            if (!$this->isStopping() && $code === 0 && ($config['essential'] ?? false)) {
                 $this->emit('essential_exit', [$id]);
                 return;
             }
             /** We stop processing if there are no input processes available **/
-            if (0 === count($this->input_processes)) {
+            if (0 === count($this->input_processes) && $this->hasAutostartProcesses()) {
                 $this->emit('all_processes_stopped');
             }
         });
@@ -333,11 +338,13 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
                 $this->logger->critical("Input process $id exit was due to fatal PHP error");
             }
             /** Restart the input process if it exits with an error code EXCEPT if it is exit code 127 - Command Not Found */
-            if (!$this->isStopping()) {
+            $config = $this->input_processes_config[$id] ?? null;
+            $oneShot = $config === null || $config['autostart'] === false;
+            if (!$this->isStopping() && !$oneShot) {
                 if (!in_array($code, [0, 127], true)) {
                     $this->logger->debug("Restarting process $id");
                     $this->start_input_process($id);
-                } elseif ($this->input_processes_config[$id]['essential']) {
+                } elseif ($config['essential']) {
                     if ($code === 127) {
                         $this->logger->info("Essential input process cannot be found. Shutting down");
                     } else {
@@ -348,10 +355,23 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
                 }
             }
             /** We stop processing if there are no input processes available **/
-            if (0 === count($this->input_processes)) {
+            if (0 === count($this->input_processes) && $this->hasAutostartProcesses()) {
                 $this->emit('all_processes_stopped');
             }
         });
+    }
+
+    /**
+     * @return bool
+     */
+    protected function hasAutostartProcesses(): bool
+    {
+        foreach ($this->input_processes_config as $config) {
+            if ($config['autostart'] === true) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
