@@ -195,7 +195,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
              * @TODO This might not be the best place to call this where multiple stream interlace with different timestamps.
              * @TODO This should be moved to checking if a matcher would handle the event then to call it's timeout check first and other items.
              */
-            if (!in_array($event->event, Scheduler::CONTROL_MESSAGES, true)) {
+            if (!in_array($event->event, Scheduler::CONTROL_MESSAGES, true) && $this->referenceClock instanceof BatchClock) {
                 $this->referenceClock->set($event->datetime->modify('-1 millisecond'));
                 $this->triggerTimeouts();
             }
