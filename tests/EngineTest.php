@@ -5,6 +5,7 @@ namespace EdgeTelemetrics\EventCorrelation\Tests;
 use EdgeTelemetrics\EventCorrelation\CorrelationEngine;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
+use EdgeTelemetrics\EventCorrelation\Tests\Rules\MatchAnyRule;
 use EdgeTelemetrics\EventCorrelation\Tests\Rules\TimeoutRule;
 use PHPUnit\Framework\TestCase;
 use function array_shift;
@@ -94,5 +95,33 @@ class EngineTest extends TestCase {
         $first = array_shift($timeouts);
         $second = array_shift($timeouts);
         $this->assertTrue($first <= $second);
+    }
+
+    public function testEngineRestoresOldFormatStateForConfiguredRule() : void {
+        $engine = new CorrelationEngine([TimeoutRule::class]);
+
+        $state = [
+            'eventstream_live' => false,
+            'statistics' => [],
+            'events' => [],
+            'matchers' => [serialize(new TimeoutRule())],
+        ];
+        $engine->setState($state);
+
+        $this->assertCount(1, $engine->getState()['matchers']);
+    }
+
+    public function testEngineSkipsOldFormatStateForUnconfiguredRule() : void {
+        $engine = new CorrelationEngine([TimeoutRule::class]);
+
+        $state = [
+            'eventstream_live' => false,
+            'statistics' => [],
+            'events' => [],
+            'matchers' => [serialize(new MatchAnyRule())],
+        ];
+        $engine->setState($state);
+
+        $this->assertCount(0, $engine->getState()['matchers']);
     }
 }

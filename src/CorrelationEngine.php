@@ -713,6 +713,14 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
 
         //Set our handler if we unserialize the engine state and defined classed don't exist anymore (eg Generated Classes)
         ini_set('unserialize_callback_func', 'EdgeTelemetrics\EventCorrelation\handleMissingClass');
+
+        $allowedMatcherClasses = [Event::class, \DateTimeImmutable::class, \DateTime::class, \DateTimeZone::class];
+        foreach ($this->initialEventLookup as $initialMatchers) {
+            foreach ($initialMatchers as $initialMatcher) {
+                $allowedMatcherClasses[] = is_object($initialMatcher) ? $initialMatcher::class : $initialMatcher;
+            }
+        }
+
         foreach($state['matchers'] as $matcherState)
         {
             /**
@@ -724,8 +732,12 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
              * 5. Let the engine know what events to forward to the state machine.
              */
             if (is_string($matcherState)) {
-                //Old Format
-                $matcher = @unserialize($matcherState);
+                //Old Format @TODO Remove this soon, all old systems updated
+                $matcher = @unserialize($matcherState, ['allowed_classes' => $allowedMatcherClasses]);
+                if ($matcher instanceof \__PHP_Incomplete_Class) {
+                    $this->logger?->warning('Skipping saved matcher of undefined class ' . ($matcher->__PHP_Incomplete_Class_Name ?? 'unknown'));
+                    continue;
+                }
                 if (!($matcher instanceof AEventProcessor)) {
                     fwrite(STDERR, 'FATAL: Un-serialisation of Matcher did not return an instance of AEventProcessor' . PHP_EOL);
                     exit(1);
