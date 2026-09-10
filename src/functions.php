@@ -19,8 +19,6 @@ use React\EventLoop\Loop;
 use RuntimeException;
 
 use Throwable;
-use function deflate_add;
-use function deflate_init;
 use function error_get_last;
 use function escapeshellarg;
 use function file_exists;
