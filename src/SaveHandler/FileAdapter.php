@@ -84,8 +84,6 @@ class FileAdapter implements SaveHandlerInterface {
             return;
         }
 
-        $this->asyncSaveInProgress = true;
-
         if ($this->process === null) {
             $this->process = new Process(php_cmd(realpath(__DIR__ . '/../../bin/save_state.php'), true),
                 dirname($this->saveFileName), ['SAVESTATE_FILENAME' => $this->saveFileName]);
@@ -150,6 +148,8 @@ class FileAdapter implements SaveHandlerInterface {
             $this->emit('save:failed', ['exception' => $ex] );
             return;
         }
+
+        $this->asyncSaveInProgress = true;
 
         $uniqid = round(hrtime(true)/1e+3) . '.' . bin2hex(random_bytes(4));
         $rpc_request = new JsonRpcRequest(Scheduler::ACTION_RUN_METHOD, ['state' => $state, 'time' => hrtime(true)], $uniqid);
