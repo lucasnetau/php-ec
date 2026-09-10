@@ -109,6 +109,9 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\php_cmd')) {
     {
         if (!file_exists($filename)) {
             $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
+            if ($filename === false) {
+                throw new RuntimeException('Unable to locate script_not_found script in PHP-EC library');
+            }
         }
         if ($asArray) {
             return [
@@ -132,8 +135,14 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd')) {
     {
         if (!file_exists($filename)) {
             $filename = realpath(__DIR__ . '/../bin/script_not_found.php');
+            if ($filename === false) {
+                throw new RuntimeException('Unable to locate script_not_found script in PHP-EC library');
+            }
         }
         $prepend_file = realpath(__DIR__ . '/../bin/source_prepend.php');
+        if ($prepend_file === false) {
+            throw new RuntimeException('Unable to locate source_prepend script in PHP-EC library');
+        }
         if ($asArray) {
             return [
                 PHP_BINARY,
