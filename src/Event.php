@@ -16,6 +16,7 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
 use Exception;
+use InvalidArgumentException;
 use function ucfirst;
 use function method_exists;
 use function property_exists;
@@ -64,16 +65,25 @@ class Event implements IEvent {
         $timezone = new DateTimeZone('UTC');
 
         $datetime_value = $kvp['datetime'] ?? null;
-        if (is_int($datetime_value)) {
-            /** Integer is processed as a UNIX timestamp */
-            $time = DateTimeImmutable::createFromFormat('U', (string)$datetime_value);
+        if (is_int($datetime_value) || is_float($datetime_value)) {
+            /** Integer/float is processed as a UNIX timestamp */
+            $time = new DateTimeImmutable('@' . sprintf('%.6F', (float)$datetime_value));
         } elseif($datetime_value instanceof DateTimeInterface) {
             $time = ($datetime_value instanceof DateTime) ? DateTimeImmutable::createFromMutable($datetime_value) : $datetime_value;
+        } elseif(is_string($datetime_value) && is_numeric($datetime_value)) {
+            /** Numeric string is processed as a UNIX timestamp */
+            $time = new DateTimeImmutable('@' . sprintf('%.6F', (float)$datetime_value));
         } elseif(is_string($datetime_value)) {
+            $datetime_value = trim($datetime_value);
+            if ($datetime_value === '') {
+                throw new InvalidArgumentException('Event datetime string must not be empty');
+            }
             $time = new DateTimeImmutable($datetime_value);
-        } else {
+        } elseif ($datetime_value === null) {
             /** If the event data doesn't have a datetime then set it to the server time when received **/
             $time = new DateTimeImmutable();
+        } else {
+            throw new InvalidArgumentException('Unsupported event datetime type: ' . gettype($datetime_value));
         }
 
         //Normalise to UTC
