@@ -60,7 +60,7 @@ class JsonRpcLogger extends AbstractLogger
      */
     public function __construct(string $logLevel = LogLevel::WARNING, $stream = STDOUT)
     {
-        $this->logLevel = $logLevel;
+        $this->logLevel = isset(self::LOG_LEVEL_MAP[$logLevel]) ? $logLevel : LogLevel::WARNING;
 
         if (is_resource($stream) || $stream instanceof WritableStreamInterface) {
             $this->stream = $stream;
@@ -76,6 +76,9 @@ class JsonRpcLogger extends AbstractLogger
      */
     public function log($level, $message, array $context = []): void
     {
+        if (!isset(self::LOG_LEVEL_MAP[$level])) {
+            $level = LogLevel::ERROR;
+        }
         if (self::LOG_LEVEL_MAP[$level] < self::LOG_LEVEL_MAP[$this->logLevel]) {
             return;
         }
