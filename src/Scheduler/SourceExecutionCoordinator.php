@@ -220,7 +220,10 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
             $this->logger->info("Started input process $id");
             $this->input_processes[$id] = $process;
             if (\function_exists('\posix_setpgid')) {
-                \posix_setpgid($process->getPid(), 0);
+                $pid = $process->getPid();
+                if ($pid !== null) {
+                    \posix_setpgid($pid, 0);
+                }
             }
             return $process;
         }
