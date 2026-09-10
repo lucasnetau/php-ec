@@ -20,7 +20,7 @@ class ArrayMemory implements MemoryInterface
     /** @var array<string, array<string, MemoryEntry>> */
     private array $store = [];
 
-    /** @var array<int, list{string, string}> Min-heap of [expiresAt timestamp, namespace, key] for TTL expiry */
+    /** @var array<int, list{int, string, string}> Min-heap of [expiresAt timestamp, namespace, key] for TTL expiry */
     private array $expiryQueue = [];
 
     private bool $expiryQueueDirty = false;
