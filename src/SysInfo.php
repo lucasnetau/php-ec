@@ -85,7 +85,9 @@ class SysInfo {
             return self::NO_LIMIT;
         }
 
-        preg_match("/^(-?[.0-9]+)([KMG])?$/i", $memory_limit_setting, $matches, PREG_UNMATCHED_AS_NULL);
+        if (preg_match("/^(-?[.0-9]+)([KMG])?$/i", $memory_limit_setting, $matches, PREG_UNMATCHED_AS_NULL) !== 1) {
+            return self::NO_LIMIT;
+        }
 
         $bytes = (int)$matches[1];
         $multiplier = (null == $matches[2]) ? 1 : $multiplierTable[strtoupper($matches[2])];
