@@ -8,6 +8,7 @@ use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\EventCorrelation\Tests\Rules\MatchAnyRule;
 use EdgeTelemetrics\EventCorrelation\Tests\Rules\TimeoutRule;
 use PHPUnit\Framework\TestCase;
+use VStelmakh\PsrTestLogger\TestLogger;
 use function array_shift;
 
 require_once __DIR__ . '/../vendor/autoload.php';
@@ -35,6 +36,19 @@ class EngineTest extends TestCase {
     public function testEngineThrowsOnDuplicateRuleClassString(): void {
         $this->expectException(\RuntimeException::class);
         new CorrelationEngine([[TimeoutRule::class, []],[TimeoutRule::class, []]]);
+    }
+
+    public function testLiveClockCorrectionLogsInsteadOfWritingToStdout() : void {
+        $engine = new CorrelationEngine([TimeoutRule::class]);
+        $logger = new TestLogger();
+        $engine->setLogger($logger);
+        $engine->setEventStreamLive();
+
+        $engine->handle(new Event(['event' => 'Test', 'datetime' => '2020-01-01T00:00:00Z']));
+
+        $logger->assert()
+            ->hasWarning()
+            ->withMessageContains('correcting received time');
     }
 
     public function testEngineCanSerialiseStateWithClassTypeRule() : void {

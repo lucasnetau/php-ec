@@ -186,7 +186,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
              */
             $now = $this->referenceClock->now();
             if (abs($now->getTimestamp() - $event->datetime->getTimestamp()) > (self::MAX_TIME_VARIANCE)) {
-                echo "Correcting received time to {$now->format('c')}\n";
+                $this->logger?->warning('Event received outside of maximum time variance, correcting received time to {time}', ['time' => $now->format('c')]);
                 $event->setReceivedTime($now);
             }
         } else {
