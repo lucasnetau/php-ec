@@ -680,6 +680,15 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
      */
     public function setState(array $state) : void
     {
+        foreach (['statistics', 'events', 'eventstream_live', 'matchers'] as $required) {
+            if (!array_key_exists($required, $state)) {
+                throw new RuntimeException("Invalid engine state: missing '$required'");
+            }
+        }
+        if (!is_array($state['statistics']) || !is_array($state['events']) || !is_array($state['matchers'])) {
+            throw new RuntimeException('Invalid engine state: statistics, events and matchers must be arrays');
+        }
+
         $this->statistics = $state['statistics'];
         $events = [];
         foreach($state['events'] as $hash => $eventData)
@@ -691,8 +700,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
                 //Old Format
                 $event = @unserialize($eventData, ['allowed_classes' => [Event::class]]);
                 if (!($event instanceof IEvent)) {
-                    fwrite(STDERR,'FATAL: Un-serialisation of Event did not return an instance of IEvent' . PHP_EOL);
-                    exit();
+                    throw new RuntimeException('Un-serialisation of Event did not return an instance of IEvent');
                 }
             } elseif (is_array($eventData)) {
                 //New Format
@@ -701,8 +709,7 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
 
                 $event->__unserialize($eventData);
             } else {
-                fwrite(STDERR,'FATAL: Unexpected saved state of Event found. Exit' . PHP_EOL);
-                exit();
+                throw new RuntimeException('Unexpected saved state of Event found');
             }
             $events[$hash] = $event;
         }
@@ -740,29 +747,34 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
                     continue;
                 }
                 if (!($matcher instanceof AEventProcessor)) {
-                    fwrite(STDERR, 'FATAL: Un-serialisation of Matcher did not return an instance of AEventProcessor' . PHP_EOL);
-                    exit(1);
+                    throw new RuntimeException('Un-serialisation of Matcher did not return an instance of AEventProcessor');
                 }
             } elseif(is_array($matcherState)) {
                 //New Format ["c" => CLASSNAME, "s" => [<save state>]
+                if (!isset($matcherState['c']) || !is_array($matcherState['s'] ?? null)) {
+                    throw new RuntimeException('Invalid saved state of Matcher');
+                }
                 $className = $matcherState['c'];
                 if (!class_exists($className)) {
                     \EdgeTelemetrics\EventCorrelation\handleMissingClass($className);
                 }
                 if (!is_a($className, AEventProcessor::class, true)) {
-                    fwrite(STDERR, 'FATAL: Matcher class is not an instance of AEventProcessor' . PHP_EOL);
-                    exit(1);
+                    throw new RuntimeException('Matcher class is not an instance of AEventProcessor');
                 }
                 $class = new ReflectionClass($className);
                 $matcher = $class->newInstanceWithoutConstructor();
 
-                $matcher->__unserialize($matcherState['s']);
+                try {
+                    $matcher->__unserialize($matcherState['s']);
 
-                //Filter the events to be given to the event matcher to the list in the save state.
-                $expectedEvents = array_intersect_key($events, array_flip($matcherState['s']['events']));
+                    //Filter the events to be given to the event matcher to the list in the save state.
+                    $expectedEvents = array_intersect_key($events, array_flip($matcherState['s']['events'] ?? []));
+                } catch (\Throwable $ex) {
+                    $this->logger?->warning('Skipping damaged saved matcher ' . $className . ': ' . $ex->getMessage());
+                    continue;
+                }
             } else {
-                fwrite(STDERR, 'FATAL: Invalid saved state of Matcher' . PHP_EOL);
-                exit(1);
+                throw new RuntimeException('Invalid saved state of Matcher');
             }
             if ($matcher instanceof UndefinedRule /** && error_on_undefined=false */) {
                 // Skip this if the rule is undefined

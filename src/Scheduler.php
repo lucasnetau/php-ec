@@ -119,7 +119,7 @@ class Scheduler implements LoggerAwareInterface {
     protected array $scheduledTasks = [];
 
     /** @var SaveHandlerInterface */
-    protected SaveHandlerInterface $saveStateHandler;
+    protected ?SaveHandlerInterface $saveStateHandler = null;
 
     /**
      * @var string Filename to save state to
@@ -738,8 +738,8 @@ class Scheduler implements LoggerAwareInterface {
 
         if ($restoring) {
             try {
-                $this->setState($savedState['scheduler']);
-                $this->engine->setState($savedState['engine']);
+                $this->setState($savedState['scheduler'] ?? []);
+                $this->engine->setState($savedState['engine'] ?? []);
                 if (isset($savedState['memory'])) {
                     $this->collectiveMemory->setState($savedState['memory']);
                 }
@@ -1097,10 +1097,12 @@ class Scheduler implements LoggerAwareInterface {
      */
     protected function setState(array $state) : void
     {
-        $this->sourceExecutionCoordinator->setInputProcessesCheckpoints($state['input']['checkpoints']);
+        $this->sourceExecutionCoordinator->setInputProcessesCheckpoints($state['input']['checkpoints'] ?? []);
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
         /** @TODO, this could be a big array, we need to handle that in a memory sensitive way */
-        $erroredCount = count($state['actions']['errored']);
+        $errored = $state['actions']['errored'] ?? [];
+        $inflight = $state['actions']['inflight'] ?? [];
+        $erroredCount = count($errored);
         if ($erroredCount > 0)
         {
             $this->logger->warning("$erroredCount failed actions detected from previous execution");
@@ -1111,16 +1113,15 @@ class Scheduler implements LoggerAwareInterface {
         }
         /** @TODO: Fix up */
         if (true === static::PRESERVE_FAILED_EVENTS_ONLOAD) {
-            $this->erroredActionCommands = $state['actions']['errored'];
-            unset($state['actions']['errored']);
-            while(count($state['actions']['inflight'])) {
-                $inflight = array_shift($state['actions']['inflight']);
+            $this->erroredActionCommands = $errored;
+            while(count($inflight)) {
+                $action = array_shift($inflight);
                 $this->erroredActionCommands[] = [
                     'error' => [
                         'code' => 2,
                         'message' => 'Inflight when process exited',
                     ],
-                    'action' => $inflight,
+                    'action' => $action,
                 ];
             }
         }
