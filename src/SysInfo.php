@@ -56,7 +56,7 @@ class SysInfo {
             $this->meminfo['physicalTotal'],
             $this->getCgroupMemoryLimit(),
         ];
-        $limits = array_filter($limits, function($limit) { return $limit !== self::NO_LIMIT; });
+        $limits = array_filter($limits, function($limit) { return $limit > 0; });
 
         return (count($limits) === 0) ? self::NO_LIMIT : min($limits);
     }
@@ -71,7 +71,7 @@ class SysInfo {
             $this->meminfo['physicalTotal'],
             $this->getCgroupMemoryLimit(),
         ];
-        $limits = array_filter($limits, function($limit) { return $limit !== self::NO_LIMIT; });
+        $limits = array_filter($limits, function($limit) { return $limit > 0; });
 
         return (count($limits) === 0) ? self::NO_LIMIT : min($limits);
     }

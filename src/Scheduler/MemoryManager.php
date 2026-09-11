@@ -92,12 +92,14 @@ class MemoryManager implements LoggerAwareInterface
     /**
      * Detect the PHP memory limit from the runtime environment.
      */
-    public function initialise(): void
+    public function initialise(?SysInfo $sysInfo = null): void
     {
-        $sysInfo = new SysInfo();
+        $sysInfo ??= new SysInfo();
         $this->memoryLimit = $sysInfo->getMemoryLimit();
         $allowable = $sysInfo->getAllowableMemoryLimit();
-        $percentage = $this->memoryLimit === SysInfo::NO_LIMIT ? 100 : ($this->memoryLimit / $allowable) * 100;
+        $percentage = ($this->memoryLimit === SysInfo::NO_LIMIT || $allowable <= 0)
+            ? 100
+            : ($this->memoryLimit / $allowable) * 100;
         $this->logger->debug(
             "Memory limit set to {bytes} Bytes {percent}% of {total} Total Allowable",
             ['bytes' => $this->memoryLimit, 'total' => $allowable, 'percent' => number_format($percentage, 2)]
@@ -137,8 +139,9 @@ class MemoryManager implements LoggerAwareInterface
         if ($this->memoryLimit === 0) {
             $sysInfo = new SysInfo();
             $this->memoryLimit = $sysInfo->getMemoryLimit();
-        } elseif ($this->memoryLimit === SysInfo::NO_LIMIT) {
-            return; // unlimited memory, disable pressure checks
+        }
+        if ($this->memoryLimit === 0 || $this->memoryLimit === SysInfo::NO_LIMIT) {
+            return; // unlimited memory or no limit detected, disable pressure checks
         }
 
         $current_memory_usage = $this->currentMemoryUsage();

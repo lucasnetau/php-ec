@@ -5,6 +5,7 @@ namespace EdgeTelemetrics\EventCorrelation\Tests;
 use EdgeTelemetrics\EventCorrelation\Scheduler\MemoryManager;
 use EdgeTelemetrics\EventCorrelation\SysInfo;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\AbstractLogger;
 use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
 
@@ -298,6 +299,49 @@ class MemoryManagerTest extends TestCase {
         $logger->assert()
             ->hasLog()
             ->withMessageContains('Memory limit set to');
+    }
+
+    /**
+     * @return array{0: MemoryManager, 1: AbstractLogger&object{contexts: array}}
+     */
+    private function initialiseWithFakeLimits(int $memoryLimit, int $allowable) : array {
+        $inflightCount = 0;
+        $paused = false;
+        $resumed = false;
+        $shutdownCalled = false;
+
+        $logger = new class extends AbstractLogger {
+            public array $contexts = [];
+            public function log($level, $message, array $context = []): void {
+                $this->contexts[] = $context;
+            }
+        };
+
+        $manager = $this->buildManager($inflightCount, $paused, $resumed, $shutdownCalled);
+        $manager->setLogger($logger);
+
+        $sysInfo = new class($memoryLimit, $allowable) extends SysInfo {
+            public function __construct(private int $limit, private int $allowableLimit) {}
+            public function getMemoryLimit(): int { return $this->limit; }
+            public function getAllowableMemoryLimit(): int { return $this->allowableLimit; }
+        };
+
+        $manager->initialise($sysInfo);
+
+        return [$manager, $logger];
+    }
+
+    public function testInitialiseWithUnknownAllowableReportsNoNegativePercentage(): void {
+        [$manager, $logger] = $this->initialiseWithFakeLimits(104857600, SysInfo::NO_LIMIT);
+
+        $this->assertSame(104857600, $manager->getMemoryLimit());
+        $this->assertSame('100.00', $logger->contexts[0]['percent'], 'unknown allowable memory must not produce a negative percentage');
+    }
+
+    public function testInitialiseWithZeroAllowableDoesNotDivideByZero(): void {
+        [, $logger] = $this->initialiseWithFakeLimits(104857600, 0);
+
+        $this->assertSame('100.00', $logger->contexts[0]['percent']);
     }
 
     public function testGettersReturnDefaultsBeforeAnyCheck(): void {

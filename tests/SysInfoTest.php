@@ -42,4 +42,32 @@ class SysInfoTest extends TestCase {
 
         $this->assertSame(SysInfo::NO_LIMIT, (new SysInfo())->getPhpLimit());
     }
+
+    private function fakeSysInfo(int $physicalTotal, int $cgroupLimit, int $phpLimit = SysInfo::NO_LIMIT) : SysInfo {
+        return new class($physicalTotal, $cgroupLimit, $phpLimit) extends SysInfo {
+            public function __construct(int $physical, private int $cgroup, private int $php) {
+                $this->meminfo['physicalTotal'] = $physical;
+            }
+            public function getCgroupMemoryLimit(): int { return $this->cgroup; }
+            public function getPhpLimit(): int { return $this->php; }
+        };
+    }
+
+    public function testAllowableMemoryLimitIgnoresNonPositiveReadings() : void {
+        $sysInfo = $this->fakeSysInfo(17179869184, 0);
+
+        $this->assertSame(17179869184, $sysInfo->getAllowableMemoryLimit(), 'a zero cgroup reading must not poison valid physical memory');
+    }
+
+    public function testAllowableMemoryLimitIsNoLimitWhenNoValidReading() : void {
+        $sysInfo = $this->fakeSysInfo(0, 0);
+
+        $this->assertSame(SysInfo::NO_LIMIT, $sysInfo->getAllowableMemoryLimit());
+    }
+
+    public function testMemoryLimitIgnoresNonPositiveReadings() : void {
+        $sysInfo = $this->fakeSysInfo(104857600, 0, 0);
+
+        $this->assertSame(104857600, $sysInfo->getMemoryLimit());
+    }
 }
