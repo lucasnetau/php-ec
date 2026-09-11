@@ -10,7 +10,7 @@
     "ext-json": "*",
     "ext-pcntl": "*",
     "ext-zlib": "*",
-    "evenement/evenement": "^3.0.1",
+    "evenement/evenement": "^3.0.2",
     "edgetelemetrics/php-json-rpc": "^1.2.2",
     "clue/ndjson-react": "^1.2.0",
     "react/child-process": ">=0.6.6",
@@ -24,6 +24,7 @@
   },
   "suggest": {
     "ext-zend-opcache": "OPCache greatly increases performance and reduces memory usage",
+    "ext-posix": "Posix process handling",
     "edgetelemetrics/timebucket": "Process temporal data in discrete time slices",
     "react/socket": "Required for Management server",
     "react/http": "Required for Management server",
