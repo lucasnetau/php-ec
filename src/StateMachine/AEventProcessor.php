@@ -506,7 +506,7 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
 
         $this->unresolved_events = $data['events'];
 
-        $this->instanceId = $data['instanceId'] ?? $this->generateInstanceId(); //Generate a new ID if we don't have one serialized
+        $this->instanceId = $data['id'] ?? $data['instanceId'] ?? $this->generateInstanceId(); //jsonSerialize() writes 'id'; accept legacy 'instanceId' too
         $this->actionFired = $data['actionFired'];
         $this->isTimedOut = $data['isTimedOut'];
         $this->context = $data['context'];

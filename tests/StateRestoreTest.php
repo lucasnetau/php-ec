@@ -83,6 +83,27 @@ class StateRestoreTest extends TestCase {
         $this->assertCount(0, $engine->getState()['matchers']);
     }
 
+    public function testMatcherInstanceIdSurvivesSerialisation() : void {
+        $state = (new TimeoutRule())->jsonSerialize();
+
+        $restored = new TimeoutRule();
+        $restored->__unserialize($state);
+
+        $this->assertSame($state['id'], $restored->jsonSerialize()['id']);
+    }
+
+    public function testMatcherAcceptsLegacyInstanceIdKey() : void {
+        $state = (new TimeoutRule())->jsonSerialize();
+        $legacyId = $state['id'];
+        unset($state['id']);
+        $state['instanceId'] = $legacyId;
+
+        $restored = new TimeoutRule();
+        $restored->__unserialize($state);
+
+        $this->assertSame($legacyId, $restored->jsonSerialize()['id']);
+    }
+
     public function testSchedulerRestoresStateMissingOptionalSections() : void {
         $file = tempnam(sys_get_temp_dir(), 'php-ec-restore-test-');
         file_put_contents($file, json_encode([
