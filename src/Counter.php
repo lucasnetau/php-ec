@@ -13,7 +13,6 @@ namespace EdgeTelemetrics\EventCorrelation;
 
 use DateInterval;
 use DateTimeImmutable;
-use function microtime;
 use function round;
 
 class Counter {
@@ -42,6 +41,16 @@ class Counter {
     protected int $lastEventTime = 0;
 
     /**
+     * @var int Wall clock epoch (seconds) captured at construction
+     */
+    protected int $epochAnchor;
+
+    /**
+     * @var int Monotonic time in the counter's resolution captured at construction
+     */
+    protected int $timeAnchor;
+
+    /**
      * @param DateInterval $interval
      * @param int $resolution
      */
@@ -53,6 +62,8 @@ class Counter {
         $this->counter_length = $counter_length;
         $this->resolution = $resolution;
         $this->initCounter();
+        $this->timeAnchor = $this->getTime();
+        $this->epochAnchor = time();
     }
 
     /**
@@ -90,12 +101,13 @@ class Counter {
             //No event seen yet
             return 0;
         }
-        $timeSinceLastEvent = $this->getTime()-$this->lastEventTime;
+        //Derive the event timestamp from the wall clock anchor plus monotonic elapsed time,
+        //so wall clock adjustments (NTP, VM time sync) cannot move reported event times.
+        $elapsed = $this->lastEventTime - $this->timeAnchor;
         if (self::RESOLUTION_MILLISECONDS === $this->resolution) {
-            //Time since last event is in milliseconds, convert to seconds before subtracting
-            return (int)round(microtime(true)-($timeSinceLastEvent / 1000));
+            return (int)round($this->epochAnchor + ($elapsed / 1000));
         }
-        return time()-$timeSinceLastEvent;
+        return $this->epochAnchor + $elapsed;
     }
 
     /**
