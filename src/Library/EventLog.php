@@ -22,7 +22,7 @@ class EventLog {
         $this->events[] = [
             'datetime' => $event->datetime->format('Y-m-d H:i:s'),
             'event'    => $event->event,
-            'data'     => $event->getEventName() ? json_encode($event->getEventName()) : null,
+            'data'     => json_encode($event->toArray()) ?: null,
         ];
         if (count($this->events) > $this->maxEvents) {
             array_shift($this->events);
