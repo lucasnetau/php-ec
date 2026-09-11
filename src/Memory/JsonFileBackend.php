@@ -17,16 +17,19 @@ use function dirname;
 use function file_exists;
 use function file_put_contents;
 use function file_get_contents;
+use function getmypid;
 use function gzdecode;
 use function gzencode;
+use function is_array;
 use function is_dir;
 use function is_readable;
 use function is_writable;
 use function json_decode;
 use function json_encode;
 use function mkdir;
+use function rename;
 use function str_starts_with;
-use function strlen;
+use function unlink;
 
 use const JSON_PRETTY_PRINT;
 use const JSON_THROW_ON_ERROR;
@@ -52,32 +55,37 @@ class JsonFileBackend implements MemoryBackendInterface
         }
 
         $json = @file_get_contents($this->filePath);
-        if ($json === false || $json === '') {
-            return [];
+        if ($json === false) {
+            throw new RuntimeException("Unable to read memory backend file: {$this->filePath}");
+        }
+        if ($json === '') {
+            return []; //A legitimately empty file means no memory has been written yet
         }
 
         if (str_starts_with($json, "\x1f\x8b")) {
-            $json = gzdecode($json);
-            if ($json === false) {
-                return [];
+            $decoded = @gzdecode($json);
+            if ($decoded === false) {
+                throw new RuntimeException("Memory backend file is corrupt (invalid gzip): {$this->filePath}");
             }
+            $json = $decoded;
         }
 
         try {
             $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
-        } catch (\JsonException) {
-            return [];
+        } catch (\JsonException $ex) {
+            throw new RuntimeException("Memory backend file is corrupt (invalid JSON): {$this->filePath}", 0, $ex);
         }
 
         if (!is_array($data)) {
-            return [];
+            throw new RuntimeException("Memory backend file has unexpected content: {$this->filePath}");
         }
 
         $entries = [];
-        foreach ($data as $item) {
-            if (isset($item['namespace'], $item['key'], $item['value'])) {
-                $entries[] = MemoryEntry::fromArray($item);
+        foreach ($data as $index => $item) {
+            if (!is_array($item) || !isset($item['namespace'], $item['key'], $item['value'])) {
+                throw new RuntimeException("Memory backend file contains an invalid entry at index {$index}: {$this->filePath}");
             }
+            $entries[] = MemoryEntry::fromArray($item);
         }
 
         return $entries;
@@ -87,7 +95,7 @@ class JsonFileBackend implements MemoryBackendInterface
     {
         $dir = dirname($this->filePath);
         if (!is_dir($dir)) {
-            if (!mkdir($dir, 0777, true)) {
+            if (!mkdir($dir, 0755, true)) {
                 throw new RuntimeException("Unable to create memory backend directory: {$dir}");
             }
         }
@@ -103,6 +111,21 @@ class JsonFileBackend implements MemoryBackendInterface
 
         $json = json_encode($data, JSON_THROW_ON_ERROR);
         $compressed = gzencode($json, 2);
-        file_put_contents($this->filePath, $compressed, LOCK_EX);
+        if ($compressed === false) {
+            throw new RuntimeException("Unable to compress memory backend data for: {$this->filePath}");
+        }
+
+        //Write to a sibling temp file then rename, so a crash mid-write can never
+        //leave a truncated/corrupt memory file behind.
+        $tmpFile = $this->filePath . '.tmp.' . getmypid();
+        if (@file_put_contents($tmpFile, $compressed, LOCK_EX) === false) {
+            @unlink($tmpFile);
+            throw new RuntimeException("Unable to write memory backend file: {$tmpFile}");
+        }
+
+        if (!@rename($tmpFile, $this->filePath)) {
+            @unlink($tmpFile);
+            throw new RuntimeException("Unable to replace memory backend file: {$this->filePath}");
+        }
     }
 }

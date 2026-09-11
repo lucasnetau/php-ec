@@ -9,6 +9,8 @@ use EdgeTelemetrics\EventCorrelation\Memory\MemoryEngine;
 use EdgeTelemetrics\EventCorrelation\Memory\MemoryWrite;
 use EdgeTelemetrics\EventCorrelation\Memory\JsonFileBackend;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
+use VStelmakh\PsrTestLogger\TestLogger;
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
@@ -196,14 +198,76 @@ class MemoryTest extends TestCase
         }
     }
 
-    public function testJsonFileBackendLoadCorruptedReturnsEmpty(): void
+    public function testJsonFileBackendLoadCorruptedThrows(): void
     {
         $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
         try {
             file_put_contents($tmpFile, '{not valid json[[[');
             $backend = new JsonFileBackend($tmpFile);
-            $loaded = $backend->load();
-            $this->assertCount(0, $loaded);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('corrupt');
+            $backend->load();
+        } finally {
+            @unlink($tmpFile);
+        }
+    }
+
+    public function testJsonFileBackendLoadWrongShapeThrows(): void
+    {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
+        try {
+            file_put_contents($tmpFile, gzencode(json_encode([['key' => 'missing-namespace']])));
+            $backend = new JsonFileBackend($tmpFile);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('invalid entry');
+            $backend->load();
+        } finally {
+            @unlink($tmpFile);
+        }
+    }
+
+    public function testJsonFileBackendSaveFailureLeavesExistingFileUntouched(): void
+    {
+        $dir = sys_get_temp_dir() . '/php-ec-mem-' . uniqid();
+        mkdir($dir);
+        $path = $dir . '/memory.json';
+        try {
+            $backend = new JsonFileBackend($path);
+            $backend->save([new MemoryEntry('ns', 'key', 'old', null, true)]);
+
+            //Turn the target into a directory so the atomic rename must fail
+            unlink($path);
+            mkdir($path);
+
+            try {
+                $backend->save([new MemoryEntry('ns', 'key', 'new', null, true)]);
+                $this->fail('Expected RuntimeException when the atomic rename fails');
+            } catch (RuntimeException $ex) {
+                $this->assertStringContainsString('replace', $ex->getMessage());
+            }
+
+            $this->assertDirectoryExists($path);
+            $this->assertSame([], glob($dir . '/memory.json.tmp.*'), 'temp file must be cleaned up');
+        } finally {
+            if (is_dir($path)) {
+                rmdir($path);
+            }
+            @rmdir($dir);
+        }
+    }
+
+    public function testMemoryEngineLogsCorruptBackendAndContinues(): void
+    {
+        $tmpFile = tempnam(sys_get_temp_dir(), 'memtest_') . '.json';
+        try {
+            file_put_contents($tmpFile, '{not valid json[[[');
+            $logger = new TestLogger();
+            $engine = new MemoryEngine(new JsonFileBackend($tmpFile));
+            $engine->setLogger($logger);
+
+            $engine->loadFromBackend();
+
+            $logger->assert()->hasError();
         } finally {
             @unlink($tmpFile);
         }

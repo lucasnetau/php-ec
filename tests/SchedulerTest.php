@@ -4,6 +4,9 @@ namespace EdgeTelemetrics\EventCorrelation\Tests;
 
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Library\Source\GeneratorSource;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryBackendInterface;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryEngine;
+use EdgeTelemetrics\EventCorrelation\Memory\MemoryWrite;
 use EdgeTelemetrics\EventCorrelation\Rule;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ObservableScheduler;
@@ -152,5 +155,37 @@ class SchedulerTest extends TestCase {
 
         $calculated = $eventTime->modify('+15 second');
         $this->assertEquals($calculated->format('Y-m-d H:i:s'), $timer->format('Y-m-d H:i:s'));
+    }
+
+    public function testPersistMemoryFailureIsReportedAndKeepsSchedulerDirty() : void {
+        $scheduler = new class([]) extends ObservableScheduler {
+            public function useMemoryEngine(MemoryEngine $engine) : void {
+                $this->collectiveMemory = $engine;
+            }
+            public function callPersistMemory() : void {
+                $this->persistMemory();
+            }
+        };
+
+        $logger = new TestLogger();
+        $scheduler->setLogger($logger);
+
+        $backend = new class implements MemoryBackendInterface {
+            public function load() : array {
+                return [];
+            }
+            public function save(array $entries) : void {
+                throw new \RuntimeException('disk full');
+            }
+        };
+
+        $memory = new MemoryEngine($backend);
+        $memory->applyWrite(new MemoryWrite('ns', 'key', 'value', persistent: true));
+        $scheduler->useMemoryEngine($memory);
+
+        $scheduler->callPersistMemory();
+
+        $logger->assert()->hasCritical();
+        $this->assertTrue($scheduler->isDirty(), 'a failed persist must leave the scheduler dirty for retry');
     }
 }

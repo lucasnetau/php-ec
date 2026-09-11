@@ -112,7 +112,14 @@ class MemoryEngine implements MemoryInterface, LoggerAwareInterface
             return;
         }
 
-        $entries = $this->backend->load();
+        try {
+            $entries = $this->backend->load();
+        } catch (\Throwable $ex) {
+            //Never treat a corrupt/unreadable backend as "no memory": report it and
+            //continue with whatever was restored from the saved state snapshot.
+            $this->logger->error('Memory backend load failed; continuing without persisted memory', ['exception' => $ex]);
+            return;
+        }
 
         // Merge backend entries into memory without overwriting entries already
         // restored from the saved state snapshot, which is the more recent knowledge.

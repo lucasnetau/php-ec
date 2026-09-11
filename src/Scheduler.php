@@ -648,6 +648,24 @@ class Scheduler implements LoggerAwareInterface {
         $this->loop->futureTick($dispatchBatch);
     }
 
+    /**
+     * Persist collective memory, routing failures through the existing save:failed
+     * path so a backend failure (e.g. disk full) cannot propagate out of a timer.
+     */
+    protected function persistMemory() : void
+    {
+        try {
+            $this->collectiveMemory->persist();
+        } catch (Throwable $ex) {
+            $this->dirty = true;
+            if ($this->saveStateHandler !== null) {
+                $this->saveStateHandler->emit('save:failed', ['exception' => $ex]);
+            } else {
+                $this->logger->critical('Memory persist failed.', ['exception' => $ex]);
+            }
+        }
+    }
+
     protected function setup_save_state() : void
     {
         /**
@@ -671,7 +689,7 @@ class Scheduler implements LoggerAwareInterface {
                 $this->engine->clearDirtyFlag();
                 $this->dirty = false;
                 $skipCount = 0;
-                $this->collectiveMemory->persist();
+                $this->persistMemory();
                 $this->saveStateHandler->saveStateAsync($this->buildState());
             } else if ($this->saveStateHandler->asyncSaveInProgress()) {
                 if ((++$skipCount % 5) === 0) {
@@ -686,7 +704,7 @@ class Scheduler implements LoggerAwareInterface {
             if (false === $this->saveStateHandler->asyncSaveInProgress()) {
                 $this->engine->clearDirtyFlag();
                 $this->dirty = false;
-                $this->collectiveMemory->persist();
+                $this->persistMemory();
                 $this->saveStateHandler->saveStateAsync($this->buildState());
             }
         });
@@ -1050,7 +1068,7 @@ class Scheduler implements LoggerAwareInterface {
             }
             $this->logger->debug("Event Loop stopped");
             if (isset($this->saveStateHandler)) {
-                $this->collectiveMemory->persist();
+                $this->persistMemory();
                 $this->saveStateHandler->saveStateSync($this->buildState()); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
                 unset($this->saveStateHandler);
             }
