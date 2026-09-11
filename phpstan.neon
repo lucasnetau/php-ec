@@ -1,9 +1,12 @@
 parameters:
-    phpVersion: 80100 # PHP 8.1
-    universalObjectCratesClasses:
-        - EdgeTelemetrics\EventCorrelation\Event
-        - EdgeTelemetrics\EventCorrelation\IEvent
-    dynamicConstantNames:
-        - EdgeTelemetrics\EventCorrelation\Scheduler::PRESERVE_FAILED_EVENTS_ONLOAD
-        - EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor::EVENTS
-        - EdgeTelemetrics\EventCorrelation\Rule\Cron::CRON_SCHEDULE
+  level: 4
+  paths:
+    - src/
+  phpVersion: 80100 # PHP 8.1
+  universalObjectCratesClasses:
+    - EdgeTelemetrics\EventCorrelation\Event
+    - EdgeTelemetrics\EventCorrelation\IEvent
+  dynamicConstantNames:
+    - EdgeTelemetrics\EventCorrelation\Scheduler::PRESERVE_FAILED_EVENTS_ONLOAD
+    - EdgeTelemetrics\EventCorrelation\StateMachine\AEventProcessor::EVENTS
+    - EdgeTelemetrics\EventCorrelation\Rule\Cron::CRON_SCHEDULE
