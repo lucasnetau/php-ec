@@ -666,10 +666,10 @@ class CorrelationEngine implements EventEmitterInterface, LoggerAwareInterface {
                 if (isset($state['events'][$event_hash])) {
                     continue;
                 }
-                $state['events'][$event_hash] = $event->__serialize(); //Return the array not the serialised string
+                $state['events'][$event_hash] = $event->jsonSerialize(); //Return the array not the serialised string
             }
 
-            $state['matchers'][] = ["c" => $matcher::class, "s" => ($matcher->__serialize())];
+            $state['matchers'][] = ["c" => $matcher::class, "s" => ($matcher->jsonSerialize())];
         }
         return $state;
     }
