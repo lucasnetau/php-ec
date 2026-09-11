@@ -86,8 +86,16 @@ class Counter {
      * @return int
      */
     public function getLastEventTime() : int {
+        if ($this->lastEventTime === 0) {
+            //No event seen yet
+            return 0;
+        }
         $timeSinceLastEvent = $this->getTime()-$this->lastEventTime;
-        return (self::RESOLUTION_MILLISECONDS === $this->resolution)? (int)round(microtime(true)-$timeSinceLastEvent) : time()-$timeSinceLastEvent;
+        if (self::RESOLUTION_MILLISECONDS === $this->resolution) {
+            //Time since last event is in milliseconds, convert to seconds before subtracting
+            return (int)round(microtime(true)-($timeSinceLastEvent / 1000));
+        }
+        return time()-$timeSinceLastEvent;
     }
 
     /**
