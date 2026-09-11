@@ -494,7 +494,16 @@ abstract class AEventProcessor implements IEventMatcher, IEventGenerator {
             $this->unserialize($data['data']);
             return;
         }
-        
+
+        foreach (['events', 'actionFired', 'isTimedOut', 'context'] as $required) {
+            if (!array_key_exists($required, $data)) {
+                throw new RuntimeException("Invalid matcher state: missing '$required'");
+            }
+        }
+        if (!is_array($data['events']) || !is_array($data['context'])) {
+            throw new RuntimeException('Invalid matcher state: events and context must be arrays');
+        }
+
         $this->unresolved_events = $data['events'];
 
         $this->instanceId = $data['instanceId'] ?? $this->generateInstanceId(); //Generate a new ID if we don't have one serialized
