@@ -35,7 +35,8 @@ class ClosureActionWrapper implements LoggerAwareInterface {
         }
 
         $callable = $callback(...);
-        $this->closure = $this->isBindable($callable) ? $callable->bindTo($this,$this) : $callable;
+        $bound = $this->isBindable($callable) ? @$callable->bindTo($this,$this) : null;
+        $this->closure = $bound ?? $callable;
     }
 
     public function __invoke(array $args): Promise
@@ -78,9 +79,14 @@ class ClosureActionWrapper implements LoggerAwareInterface {
      */
     private function isBindable(Closure $callable): bool
     {
+        $reflectionFunction = new ReflectionFunction($callable);
+
+        if ($reflectionFunction->isStatic()) {
+            return false;
+        }
+
         $bindable = false;
 
-        $reflectionFunction = new ReflectionFunction($callable);
         if (
             $reflectionFunction->getClosureScopeClass() === null
             || $reflectionFunction->getClosureThis() !== null
