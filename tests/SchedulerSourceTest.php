@@ -5,10 +5,12 @@ namespace EdgeTelemetrics\EventCorrelation\Tests;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Library\Source\GeneratorSource;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
+use EdgeTelemetrics\EventCorrelation\Scheduler\Messages\ExecuteSource;
 use EdgeTelemetrics\EventCorrelation\Scheduler\ObservableScheduler;
 use EdgeTelemetrics\EventCorrelation\Scheduler\State;
 use Generator;
 use PHPUnit\Framework\TestCase;
+use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
 use function EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd;
 use function file_put_contents;
@@ -88,6 +90,36 @@ class SchedulerSourceTest extends TestCase {
 
         $this->assertCount(10, $inputEvents);
         $this->assertEquals([1,2,3,4,5,6,7,8,9,10], $inputEvents);
+    }
+
+    /**
+     * @small
+     */
+    public function testOnDemandSourceRunsFromExecuteSourceMessage() : void {
+        $rule = new class() extends \EdgeTelemetrics\EventCorrelation\Rule\MatchSingle {
+            const EVENTS = [[Scheduler::CONTROL_MSG_NEW_STATE]];
+
+            public function onComplete() : void {
+                $this->emit('data', [new ExecuteSource('fetch', ['FUZZ_VALUE' => '42'])]);
+            }
+        };
+
+        $scheduler = $this->buildObservableScheduler([$rule]);
+        $scheduler->setLogger(new TestLogger());
+        $scheduler->register_input_process('fetch', wrap_source_php_cmd(__DIR__ . '/scripts/Source/OnDemandRun.php', true), autostart: false);
+
+        $received = [];
+        $scheduler->setHandleEventCallback(function($event) use (&$received, $scheduler) {
+            if ($event->event === 'Fetched') {
+                $received[] = $event->value;
+                Loop::futureTick($scheduler->shutdown(...));
+            }
+        }, null);
+
+        Loop::addTimer(5, $scheduler->exit(...));
+        $scheduler->run();
+
+        $this->assertSame(['42'], $received, 'ExecuteSource vars must be passed to the on-demand process and its event handled');
     }
 
     /**
