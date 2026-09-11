@@ -181,7 +181,7 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
                 return;
             }
             /** We stop processing if there are no input processes available **/
-            if (0 === count($this->input_processes) && $this->hasAutostartProcesses()) {
+            if (0 === count($this->input_processes) && ($this->isStopping() || $this->hasAutostartProcesses())) {
                 $this->emit('all_processes_stopped');
             }
         });
@@ -359,7 +359,7 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
                 }
             }
             /** We stop processing if there are no input processes available **/
-            if (0 === count($this->input_processes) && $this->hasAutostartProcesses()) {
+            if (0 === count($this->input_processes) && ($this->isStopping() || $this->hasAutostartProcesses())) {
                 $this->emit('all_processes_stopped');
             }
         });
