@@ -25,6 +25,7 @@
   "suggest": {
     "ext-zend-opcache": "OPCache greatly increases performance and reduces memory usage",
     "ext-posix": "Posix process handling",
+    "ext-zstd": "Faster, higher-ratio compression for JSON-RPC transport (falls back to raw deflate)",
     "edgetelemetrics/timebucket": "Process temporal data in discrete time slices",
     "react/socket": "Required for Management server",
     "react/http": "Required for Management server",

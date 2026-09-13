@@ -2,6 +2,8 @@ parameters:
   level: 4
   paths:
     - src/
+  scanFiles:
+    - stubs/zstd.stub.php
   phpVersion: 80100 # PHP 8.1
   universalObjectCratesClasses:
     - EdgeTelemetrics\EventCorrelation\Event

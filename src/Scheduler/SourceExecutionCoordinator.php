@@ -14,6 +14,7 @@ namespace EdgeTelemetrics\EventCorrelation\Scheduler;
 use Clue\React\Zlib\Decompressor;
 use EdgeTelemetrics\EventCorrelation\Event;
 use EdgeTelemetrics\EventCorrelation\Library\Histogram;
+use EdgeTelemetrics\EventCorrelation\Library\ZstdDecompressor;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use EdgeTelemetrics\JSON_RPC\React\Decoder as JsonRpcDecoder;
@@ -26,6 +27,7 @@ use React\EventLoop\LoopInterface;
 use Throwable;
 use function array_merge;
 use function count;
+use function EdgeTelemetrics\EventCorrelation\rpcCompressionAvailable;
 use function gettype;
 use function in_array;
 use function is_array;
@@ -203,6 +205,13 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
         }
         $config = $this->input_processes_config[$id];
         $env = $config['env'];
+        $algorithm = rpcCompressionAvailable($env['PHPEC_RPC_COMPRESSION'] ?? '');
+        if ('' === $algorithm) {
+            unset($env['PHPEC_RPC_COMPRESSION']);
+        } else {
+            //Pass the resolved algorithm down so both sides agree even when zstd falls back
+            $env['PHPEC_RPC_COMPRESSION'] = $algorithm;
+        }
         /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
         if (isset($this->input_processes_checkpoints[$id]))
         {
@@ -243,9 +252,13 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
             return;
         }
 
-        // raw DEFLATE decompression for source stdout. PHP's zlib.deflate stream filter produces raw DEFLATE (RFC 1951), not GZIP.
-        $compress = ($this->input_processes_config[$id]['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
-        if ($compress) {
+        // raw DEFLATE or zstd decompression for source stdout. PHP's zlib.deflate stream filter produces raw DEFLATE (RFC 1951), not GZIP.
+        $algorithm = rpcCompressionAvailable($this->input_processes_config[$id]['env']['PHPEC_RPC_COMPRESSION'] ?? '');
+        if ('zstd' === $algorithm) {
+            $decompressor = new ZstdDecompressor();
+            $process->stdout->pipe($decompressor);
+            $process->stdout = $decompressor;
+        } elseif ('deflate' === $algorithm) {
             $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
             $process->stdout->pipe($decompressor);
             $process->stdout = $decompressor;

@@ -12,6 +12,7 @@
 namespace EdgeTelemetrics\EventCorrelation;
 
 use EdgeTelemetrics\EventCorrelation\Library\SyncFlushDeflateFilter;
+use EdgeTelemetrics\EventCorrelation\Library\SyncFlushZstdFilter;
 use EdgeTelemetrics\EventCorrelation\Rule\UndefinedRule;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
 use Psr\Log\LogLevel;
@@ -189,6 +190,52 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcLogMessage')) {
     }
 }
 
+if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcCompressionAlgorithm')) {
+    /**
+     * Map a PHPEC_RPC_COMPRESSION value to a canonical algorithm name.
+     * Does not check whether the algorithm is available in this process.
+     *
+     * @return string '' (disabled), 'deflate' or 'zstd'
+     */
+    function rpcCompressionAlgorithm(string $requested): string
+    {
+        return match ($requested) {
+            '1', 'deflate' => 'deflate',
+            'zstd' => 'zstd',
+            default => '',
+        };
+    }
+}
+
+if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcCompressionAvailable')) {
+    /**
+     * Resolve a requested compression mode to something usable in this process.
+     * Falls back to raw deflate when zstd was requested but ext-zstd is missing.
+     *
+     * @return string '' (disabled), 'deflate' or 'zstd'
+     */
+    function rpcCompressionAvailable(string $requested): string
+    {
+        $algorithm = rpcCompressionAlgorithm($requested);
+        if ($algorithm === 'zstd' && !function_exists('zstd_compress_init')) {
+            return 'deflate';
+        }
+        return $algorithm;
+    }
+}
+
+if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcCompressionLevel')) {
+    /**
+     * zstd level, overridable with PHPEC_RPC_ZSTD_LEVEL and clamped to the
+     * range accepted by the extension.
+     */
+    function rpcCompressionLevel(): int
+    {
+        $level = (int)(getenv('PHPEC_RPC_ZSTD_LEVEL') ?: ZSTD_COMPRESS_LEVEL_DEFAULT);
+        return max(ZSTD_COMPRESS_LEVEL_MIN, min(ZSTD_COMPRESS_LEVEL_MAX, $level));
+    }
+}
+
 if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
     function setupErrorHandling(bool $usingEventLoop) : void
     {
@@ -236,8 +283,16 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\initialiseSourceProcess'
         $run = true;
         disableOutputBuffering();
         setupErrorHandling($usingEventLoop);
-        //Enable STDOUT compression if the env var is set. checkpoint() + error handlers use fwrite(STDOUT) and will be compressed transparently.
-        if (getenv('PHPEC_RPC_COMPRESSION') === '1') {
+        $algorithm = rpcCompressionAlgorithm(getenv('PHPEC_RPC_COMPRESSION') ?: '');
+        if ('zstd' === $algorithm) {
+            if (!function_exists('zstd_compress_init')) {
+                throw new RuntimeException('PHPEC_RPC_COMPRESSION=zstd requires the zstd extension');
+            }
+            stream_filter_register('syncflush.zstd', SyncFlushZstdFilter::class);
+            if (stream_filter_append(STDOUT, 'syncflush.zstd', STREAM_FILTER_WRITE) === false) {
+                throw new RuntimeException('Failed to append sync-flush zstd filter to STDOUT');
+            }
+        } elseif ('deflate' === $algorithm) {
             stream_filter_register('syncflush.deflate', SyncFlushDeflateFilter::class);
             if (stream_filter_append(STDOUT, 'syncflush.deflate', STREAM_FILTER_WRITE) === false) {
                 throw new RuntimeException('Failed to append sync-flush deflate filter to STDOUT');

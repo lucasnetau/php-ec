@@ -6,10 +6,14 @@
     xmlns="https://getpsalm.org/schema/config"
     xsi:schemaLocation="https://getpsalm.org/schema/config vendor/vimeo/psalm/config.xsd"
 >
+    <stubs>
+        <file name="stubs/zstd.stub.php"/>
+    </stubs>
     <projectFiles>
         <directory name="." />
         <ignoreFiles>
             <directory name="vendor" />
+            <directory name="stubs" />
         </ignoreFiles>
     </projectFiles>
 </psalm>

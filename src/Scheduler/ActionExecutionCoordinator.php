@@ -15,6 +15,7 @@ use Clue\React\Zlib\Decompressor;
 use DeflateContext;
 use EdgeTelemetrics\EventCorrelation\Action;
 use EdgeTelemetrics\EventCorrelation\Library\Histogram;
+use EdgeTelemetrics\EventCorrelation\Library\ZstdDecompressor;
 use EdgeTelemetrics\EventCorrelation\Scheduler;
 use EdgeTelemetrics\JSON_RPC\Error;
 use EdgeTelemetrics\JSON_RPC\Notification as JsonRpcNotification;
@@ -43,6 +44,10 @@ use function round;
 use function strlen;
 use function trim;
 use function gzencode;
+use function EdgeTelemetrics\EventCorrelation\rpcCompressionAvailable;
+use function EdgeTelemetrics\EventCorrelation\rpcCompressionLevel;
+use function zstd_compress_add;
+use function zstd_compress_init;
 
 class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, LoggerAwareInterface
 {
@@ -73,8 +78,14 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
     /** @var array<string, array{uncompressed: Histogram, compressed: ?Histogram}> */
     protected array $actionStdoutPacketSizes = [];
 
-    /** @var array<string, DeflateContext> */
+    /** @var array<string, string> Resolved compression algorithm per action name ('' = disabled) */
+    protected array $actionCompression = [];
+
+    /** @var array<string, \DeflateContext> */
     protected array $deflateContexts = [];
+
+    /** @var array<string, \Zstd\Compress\Context> */
+    protected array $zstdContexts = [];
 
     public function __construct() {
         $this->inflightActionClosures = new \WeakMap();
@@ -102,20 +113,38 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
         $actionConfig = $this->actionConfig[$actionName];
         /** @TODO: Handle singleShot processes true === $actionConfig['singleShot'] treat as not running for accounting */
         if (!isset($this->runningActions[$actionName])) {
+            $env = $actionConfig['env'] ?? [];
+            $compress = rpcCompressionAvailable($env['PHPEC_RPC_COMPRESSION'] ?? '');
+            if ('' === $compress) {
+                unset($env['PHPEC_RPC_COMPRESSION']);
+            } else {
+                //Pass the resolved algorithm down so both sides agree even when zstd falls back
+                $env['PHPEC_RPC_COMPRESSION'] = $compress;
+            }
+            $this->actionCompression[$actionName] = $compress;
+
             /** If there is no running action then we initialise the process **/
             if (is_string($actionConfig['cmd'])) {
                 /** we call exec to ensure actions can receive our signals and not the default bash wrapper */
-                $process = new Process('exec ' . $actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env'] ?? []);
+                $process = new Process('exec ' . $actionConfig['cmd'], $actionConfig['wd'], $env);
             } else {
                 /** When passed an array PHP will call command directly without going through a shell */
-                $process = new Process($actionConfig['cmd'], $actionConfig['wd'], $actionConfig['env'] ?? []);
+                $process = new Process($actionConfig['cmd'], $actionConfig['wd'], $env);
             }
             $process->start(Loop::get());
             $this->emit('process.start', ['actionName' => $actionName]);
 
-            // raw DEFLATE + SYNC_FLUSH for action I/O. Matches source process approach.
-            $compress = ($actionConfig['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
-            if ($compress) {
+            // raw DEFLATE or zstd (flush per message) for action I/O. Matches source process approach.
+            if ('zstd' === $compress) {
+                $decompressor = new ZstdDecompressor();
+                $process->stdout->pipe($decompressor);
+                $process->stdout = $decompressor;
+
+                $context = zstd_compress_init(rpcCompressionLevel());
+                if (false !== $context) {
+                    $this->zstdContexts[$actionName] = $context;
+                }
+            } elseif ('deflate' === $compress) {
                 $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
                 $process->stdout->pipe($decompressor);
                 $process->stdout = $decompressor;
@@ -133,7 +162,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
             $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
 
             $this->actionStdoutPacketSizes[$actionName] = [
-                'uncompressed' => new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576),
+                'uncompressed' => new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576 ),
                 'compressed' => $compress ? new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576) : null,
             ];
             $stdoutUncompressed = $this->actionStdoutPacketSizes[$actionName]['uncompressed'];
@@ -212,6 +241,8 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 }
                 unset($this->runningActions[$actionName]);
                 unset($this->deflateContexts[$actionName]);
+                unset($this->zstdContexts[$actionName]);
+                unset($this->actionCompression[$actionName]);
                 $this->checkIdle();
                 $this->emit('dirty');
             });
@@ -276,19 +307,29 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 ];
                 $this->emit('dirty');
                 $json = json_encode($rpc_request) . "\n";
+                $compress = $this->actionCompression[$actionName] ?? '';
                 if (!isset($this->actionStdinPacketSizes[$actionName])) {
-                    $compress = ($this->actionConfig[$actionName]['env']['PHPEC_RPC_COMPRESSION'] ?? '') === '1';
                     $this->actionStdinPacketSizes[$actionName] = [
                         'uncompressed' => new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576),
-                        'compressed' => $compress ? new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576) : null,
+                        'compressed' => '' !== $compress ? new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576) : null,
                     ];
                 }
                 $this->actionStdinPacketSizes[$actionName]['uncompressed']->add(strlen($json));
-                if ($this->actionStdinPacketSizes[$actionName]['compressed']) {
-                    $this->actionStdinPacketSizes[$actionName]['compressed']->add(strlen(gzencode($json)));
-                }
-                if (isset($this->deflateContexts[$actionName])) {
+                if ('zstd' === $compress && isset($this->zstdContexts[$actionName])) {
+                    $compressed = zstd_compress_add($this->zstdContexts[$actionName], $json);
+                    if (false === $compressed) {
+                        $ex = new \RuntimeException("Failed to compress request for action $actionName", -1);
+                        $this->logger->critical($ex->getMessage());
+                        $this->emit('action.failed', ['action' => $action, 'exception' => $ex]);
+                        $action->emit('failed', ['exception' => $ex]);
+                        unset($this->inflightActionCommands[$uniqid]);
+                        return;
+                    }
+                    $this->actionStdinPacketSizes[$actionName]['compressed']?->add(strlen($compressed));
+                    $process->stdin->write($compressed);
+                } elseif ('deflate' === $compress && isset($this->deflateContexts[$actionName])) {
                     $compressed = deflate_add($this->deflateContexts[$actionName], $json, ZLIB_SYNC_FLUSH);
+                    $this->actionStdinPacketSizes[$actionName]['compressed']?->add(strlen($compressed));
                     $process->stdin->write($compressed);
                 } else {
                     $process->stdin->write($json);

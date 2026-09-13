@@ -132,4 +132,63 @@ class RPCCompressionTest extends TestCase
             ->hasLog()
             ->withMessage('Action called : ["backward compat works"]');
     }
+
+    /** @small */
+    public function testSourceWithZstdCompressionDeliversEvents(): void
+    {
+        if (!function_exists('zstd_compress_init')) {
+            $this->markTestSkipped('ext-zstd is not available');
+        }
+
+        $scheduler = $this->buildObservableScheduler();
+
+        $logger = new TestLogger();
+        $scheduler->setLogger($logger);
+
+        $scheduler->register_input_process('test', wrap_source_php_cmd(__DIR__ . '/scripts/Source/CountToTen.php', true), env: ['PHPEC_RPC_COMPRESSION' => 'zstd']);
+
+        $inputEvents = [];
+        $scheduler->setHandleEventCallback(function($event) use (&$inputEvents, $scheduler) {
+            if ($event->event === 'Count') {
+                $inputEvents[] = $event->value;
+            }
+        }, null);
+
+        $scheduler->run();
+
+        $this->assertCount(10, $inputEvents);
+        $this->assertEquals([1,2,3,4,5,6,7,8,9,10], $inputEvents);
+    }
+
+    /** @small */
+    public function testActionWithZstdCompressionExecutesSuccessfully(): void
+    {
+        if (!function_exists('zstd_compress_init')) {
+            $this->markTestSkipped('ext-zstd is not available');
+        }
+
+        $scheduler = $this->buildObservableScheduler();
+
+        $logger = new TestLogger();
+        $scheduler->setLogger($logger);
+
+        $scheduler->register_action('scriptAction',
+            php_cmd(__DIR__ . '/scripts/Actions/logToScheduler.php'),
+            env: ['PHPEC_RPC_COMPRESSION' => 'zstd']);
+
+        $scheduler->on('action.completed', function($action) use ($scheduler) {
+            Loop::futureTick($scheduler->shutdown(...));
+        });
+
+        Loop::futureTick(function () use ($scheduler, $logger) {
+            $logger->debug('Running action');
+            $scheduler->queueAction(new Action('scriptAction', ['zstd action ran and able to log']));
+        });
+
+        $scheduler->run();
+
+        $logger->assert()
+            ->hasLog()
+            ->withMessage('Action called : ["zstd action ran and able to log"]');
+    }
 }

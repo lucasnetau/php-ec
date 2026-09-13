@@ -4,6 +4,8 @@ namespace EdgeTelemetrics\EventCorrelation\Library\Actions;
 
 use Clue\React\Zlib\Decompressor;
 use EdgeTelemetrics\EventCorrelation\Library\SyncFlushCompressor;
+use EdgeTelemetrics\EventCorrelation\Library\ZstdCompressor;
+use EdgeTelemetrics\EventCorrelation\Library\ZstdDecompressor;
 use Closure;
 use Clue\React\NDJson\Encoder;
 use EdgeTelemetrics\EventCorrelation\JsonRpcLogger;
@@ -26,6 +28,7 @@ use React\Stream\ReadableResourceStream;
 use React\Stream\WritableResourceStream;
 
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
+use function EdgeTelemetrics\EventCorrelation\rpcCompressionAlgorithm;
 use function EdgeTelemetrics\EventCorrelation\setupErrorHandling;
 use function fopen;
 use function function_exists;
@@ -79,13 +82,23 @@ class ActionHelper extends EventEmitter {
         $stdin = new ReadableResourceStream(fopen('php://stdin', 'r'));
         $stdout = new WritableResourceStream(fopen('php://stdout', 'w'));
 
-        // ponytail: raw DEFLATE + SYNC_FLUSH for action process I/O. Matches source process approach.
-        if ((getenv('PHPEC_RPC_COMPRESSION') ?: '') === '1') {
-            $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
+        // ponytail: compression is decided by the scheduler and passed via env; the same
+        // PHP environment is assumed, so zstd availability is not re-negotiated here.
+        $algorithm = rpcCompressionAlgorithm(getenv('PHPEC_RPC_COMPRESSION') ?: '');
+        if ('' !== $algorithm) {
+            if ('zstd' === $algorithm) {
+                if (!function_exists('zstd_compress_init')) {
+                    throw new \RuntimeException('PHPEC_RPC_COMPRESSION=zstd requires the zstd extension');
+                }
+                $decompressor = new ZstdDecompressor();
+                $compressor = new ZstdCompressor();
+            } else {
+                $decompressor = new Decompressor(ZLIB_ENCODING_RAW);
+                $compressor = new SyncFlushCompressor(ZLIB_ENCODING_RAW);
+            }
             $stdin->pipe($decompressor);
             $this->input = new Decoder($decompressor, $buffer_size);
 
-            $compressor = new SyncFlushCompressor(ZLIB_ENCODING_RAW);
             $compressor->pipe($stdout);
             $this->output = new Encoder($compressor);
         } else {

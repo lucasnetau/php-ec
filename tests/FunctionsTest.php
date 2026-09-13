@@ -10,6 +10,8 @@ use RuntimeException;
 use function EdgeTelemetrics\EventCorrelation\env;
 use function EdgeTelemetrics\EventCorrelation\handleMissingClass;
 use function EdgeTelemetrics\EventCorrelation\php_cmd;
+use function EdgeTelemetrics\EventCorrelation\rpcCompressionAlgorithm;
+use function EdgeTelemetrics\EventCorrelation\rpcCompressionAvailable;
 use function EdgeTelemetrics\EventCorrelation\rpcLogMessage;
 use function EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd;
 
@@ -101,5 +103,20 @@ class FunctionsTest extends TestCase {
         $this->assertSame(LogLevel::INFO, $notification->getParam('logLevel'));
         $this->assertSame('hello {name}', $notification->getParam('message'));
         $this->assertSame(['name' => 'world'], $notification->getParam('context'));
+    }
+
+    public function testRpcCompressionAlgorithmMapping() : void {
+        $this->assertSame('deflate', rpcCompressionAlgorithm('1'));
+        $this->assertSame('deflate', rpcCompressionAlgorithm('deflate'));
+        $this->assertSame('zstd', rpcCompressionAlgorithm('zstd'));
+        $this->assertSame('', rpcCompressionAlgorithm(''));
+        $this->assertSame('', rpcCompressionAlgorithm('gzip'));
+    }
+
+    public function testRpcCompressionAvailableFallsBackOnlyForZstd() : void {
+        $zstd = function_exists('zstd_compress_init');
+        $this->assertSame($zstd ? 'zstd' : 'deflate', rpcCompressionAvailable('zstd'));
+        $this->assertSame('deflate', rpcCompressionAvailable('1'));
+        $this->assertSame('', rpcCompressionAvailable(''));
     }
 }
