@@ -38,6 +38,10 @@ use function round;
  * scheduler coordination logic. The Scheduler creates this manager, wires it to
  * the source/action coordinators, and delegates the legacy
  * checkMemoryPressure()/memoryReclaim() methods here.
+ *
+ * Mitigation is suspended while the scheduler is replaying actions during
+ * recovery: there are no sources to pause and replay batching makes the
+ * inflight action count unsuitable for the stalled-pressure watchdog.
  */
 class MemoryManager implements LoggerAwareInterface
 {
@@ -64,6 +68,9 @@ class MemoryManager implements LoggerAwareInterface
     /** @var float Interval (seconds) for the pressure-stuck watchdog timer */
     protected float $pressureCheckInterval = 300;
 
+    /** @var Closure Returns true while the scheduler is replaying actions during recovery */
+    protected Closure $isRecovering;
+
     /**
      * @param LoopInterface $loop
      * @param Closure $inflightActionCount Returns the current number of inflight actions (int)
@@ -74,6 +81,7 @@ class MemoryManager implements LoggerAwareInterface
      * @param int $lowWatermark Memory percentage at which mitigation is considered resolved
      * @param int $actionLimitHigh Max outstanding actions before mitigation
      * @param int $actionLimitLow Outstanding action count at which mitigation is resolved
+     * @param Closure|null $isRecovering Returns true while recovery is replaying actions
      */
     public function __construct(
         protected LoopInterface $loop,
@@ -85,7 +93,9 @@ class MemoryManager implements LoggerAwareInterface
         protected int $lowWatermark,
         protected int $actionLimitHigh,
         protected int $actionLimitLow,
+        ?Closure $isRecovering = null,
     ) {
+        $this->isRecovering = $isRecovering ?? static fn(): bool => false;
         $this->logger = new NullLogger();
     }
 
@@ -123,6 +133,11 @@ class MemoryManager implements LoggerAwareInterface
             $this->loop->cancelTimer($this->checkTimer);
             $this->checkTimer = null;
         }
+        $this->cancelPressureTimer();
+    }
+
+    protected function cancelPressureTimer(): void
+    {
         if ($this->pressureTimer !== null) {
             $this->loop->cancelTimer($this->pressureTimer);
             $this->pressureTimer = null;
@@ -147,6 +162,25 @@ class MemoryManager implements LoggerAwareInterface
         $current_memory_usage = $this->currentMemoryUsage();
 
         $percent_used = (int)round(($current_memory_usage / $this->memoryLimit) * 100);
+
+        /**
+         * During recovery no input processes are running, so pausing them cannot relieve
+         * pressure. Recovery actions are also emitted in batches, which means the inflight
+         * action count can stay at the batch size (or rise again as the next batch starts)
+         * while the backlog is actually draining. The pressure watchdog would misread that
+         * as a stalled queue and shut the scheduler down. Recovery has its own failure and
+         * cooldown handling, so leave memory pressure mitigation disabled until normal
+         * operation resumes.
+         */
+        if (($this->isRecovering)()) {
+            $this->currentMemoryPercentUsed = $percent_used;
+            if ($this->paused) {
+                $this->cancelPressureTimer();
+                ($this->resumeSources)();
+                $this->paused = false;
+            }
+            return;
+        }
 
         /** Try releasing memory first and recalculate percentage used */
         if ($percent_used >= $this->highWatermark) {
@@ -191,10 +225,7 @@ class MemoryManager implements LoggerAwareInterface
                 ($this->inflightActionCount)() < $this->actionLimitLow) {
 
                 //Cancel the memory pressure timeout
-                if ($this->pressureTimer !== null) {
-                    $this->loop->cancelTimer($this->pressureTimer);
-                    $this->pressureTimer = null;
-                }
+                $this->cancelPressureTimer();
                 $this->reclaim();
                 //Resume input
                 ($this->resumeSources)();

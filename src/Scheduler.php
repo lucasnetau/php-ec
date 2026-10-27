@@ -298,6 +298,7 @@ class Scheduler implements LoggerAwareInterface {
             static::MEMORY_PRESSURE_LOW_WATERMARK,
             static::RUNNING_ACTION_LIMIT_HIGH_WATERMARK,
             static::RUNNING_ACTION_LIMIT_LOW_WATERMARK,
+            fn(): bool => $this->state->state() === State::RECOVERY,
         );
         $this->setLogger(new NullLogger());
         $this->recentEvents = new EventLog();

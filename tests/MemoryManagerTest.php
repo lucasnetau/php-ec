@@ -2,6 +2,7 @@
 
 namespace EdgeTelemetrics\EventCorrelation\Tests;
 
+use Closure;
 use EdgeTelemetrics\EventCorrelation\Scheduler\MemoryManager;
 use EdgeTelemetrics\EventCorrelation\SysInfo;
 use PHPUnit\Framework\TestCase;
@@ -39,6 +40,7 @@ class MemoryManagerTest extends TestCase {
         bool &$resumed,
         bool &$shutdownCalled,
         ?TestLogger $logger = null,
+        ?Closure $isRecovering = null,
     ): MemoryManager {
         $loop = Loop::get();
 
@@ -52,6 +54,7 @@ class MemoryManagerTest extends TestCase {
             35,   // lowWatermark
             30000,// actionLimitHigh
             500,  // actionLimitLow
+            $isRecovering,
         ) extends MemoryManager {
             private int $fakeUsage = 0;
 
@@ -258,6 +261,112 @@ class MemoryManagerTest extends TestCase {
         $loop->run();
 
         $this->assertFalse($shutdownCalled, 'Shutdown should NOT be called when inflight actions keep reducing');
+    }
+
+    public function testRecoverySkipsMemoryPressureMitigation(): void
+    {
+        $inflightCount = 40000;
+        $paused = false;
+        $resumed = false;
+        $shutdownCalled = false;
+        $recovering = true;
+
+        $manager = $this->buildManager(
+            $inflightCount,
+            $paused,
+            $resumed,
+            $shutdownCalled,
+            null,
+            function () use (&$recovering) { return $recovering; },
+        );
+        $manager->setMemoryLimitForTest(1000);
+        $manager->setMemoryUsageForTest(900); // 90% > 50% high watermark
+        $manager->setPressureCheckIntervalForTest(0.01);
+
+        $manager->check();
+
+        $this->assertFalse($paused, 'Sources must not be paused during recovery');
+        $this->assertFalse($manager->isPaused());
+        $this->assertSame(0, $manager->getPausedCount());
+        $this->assertSame(90, $manager->getPercentUsed(), 'Memory usage should still be reported during recovery');
+
+        // No watchdog should have been armed, so a stalled-looking action count
+        // cannot shut the scheduler down while recovery is replaying batches.
+        $loop = Loop::get();
+        $loop->addTimer(0.05, $loop->stop(...));
+        $loop->run();
+
+        $this->assertFalse($shutdownCalled, 'Memory watchdog must not run during recovery');
+    }
+
+    public function testPressureMitigationResumesAfterRecovery(): void
+    {
+        $inflightCount = 0;
+        $paused = false;
+        $resumed = false;
+        $shutdownCalled = false;
+        $recovering = true;
+
+        $manager = $this->buildManager(
+            $inflightCount,
+            $paused,
+            $resumed,
+            $shutdownCalled,
+            null,
+            function () use (&$recovering) { return $recovering; },
+        );
+        $manager->setMemoryLimitForTest(1000);
+        $manager->setMemoryUsageForTest(900);
+
+        $manager->check();
+        $this->assertFalse($manager->isPaused());
+
+        $recovering = false;
+        $manager->check();
+
+        $this->assertTrue($paused, 'Memory mitigation should resume once recovery completes');
+        $this->assertTrue($manager->isPaused());
+    }
+
+    public function testRecoveryClearsPausedStateAndWatchdog(): void
+    {
+        $inflightCount = 40000;
+        $paused = false;
+        $resumed = false;
+        $shutdownCalled = false;
+        $recovering = false;
+
+        $manager = $this->buildManager(
+            $inflightCount,
+            $paused,
+            $resumed,
+            $shutdownCalled,
+            null,
+            function () use (&$recovering) { return $recovering; },
+        );
+        $manager->setMemoryLimitForTest(1000);
+        $manager->setMemoryUsageForTest(900);
+        $manager->setPressureCheckIntervalForTest(0.01);
+
+        // Enter the paused state as normal operation would.
+        $manager->check();
+        $this->assertTrue($manager->isPaused());
+        $this->assertTrue($paused);
+
+        // Recovery supersedes the pause: there are no sources to keep paused and
+        // the old watchdog must not fire while recovery is running.
+        $recovering = true;
+        $resumed = false;
+        $manager->check();
+
+        $this->assertTrue($resumed, 'Any paused sources should be resumed when recovery starts');
+        $this->assertFalse($manager->isPaused());
+
+        $loop = Loop::get();
+        $loop->addTimer(0.05, $loop->stop(...));
+        $loop->run();
+
+        $this->assertFalse($shutdownCalled, 'Watchdog must be cancelled when entering recovery');
     }
 
     public function testStartAndStopManageTimers(): void {
