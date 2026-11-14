@@ -56,6 +56,11 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
         if ($this->running === false) {
             return;
         }
+        if (SIGSTOP === $signal || SIGCONT === $signal) {
+            //A source function cannot be suspended in place; ignoring avoids stopping it on a memory-pressure pause
+            return;
+        }
+        $this->running = false;
         $this->functionStop();
     }
 
