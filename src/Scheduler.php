@@ -114,6 +114,20 @@ class Scheduler implements LoggerAwareInterface {
     protected array $erroredActionCommands = [];
 
     /**
+     * Actions which were inflight when the engine was intentionally stopped (eg a planned restart).
+     * These are not faults. They are re-dispatched once the engine reaches the running state.
+     * @var array
+     */
+    protected array $deferredActionCommands = [];
+
+    /**
+     * Set when shutdown was initiated by an operator/supervisor signal (SIGINT/SIGTERM).
+     * A planned shutdown is not a fault. It is persisted in the save state so that a reboot
+     * of the engine does not trigger the failed action recovery process.
+     */
+    protected bool $plannedShutdown = false;
+
+    /**
      * @var TimerInterface[] Scheduled tasks for the scheduler
      */
     protected array $scheduledTasks = [];
@@ -377,6 +391,11 @@ class Scheduler implements LoggerAwareInterface {
         });
 
         $ec->on('action.failed', function($action, $exception) {
+            /**
+             * Journal the failure for the save state. Actions terminated by shutdown are journalled with a
+             * negative exit code which the recovery filter treats as non-retryable on the next boot, while
+             * genuine failures (positive codes / INTERNAL_ERROR) remain recoverable.
+             */
             $error = [
                 'error' => [
                     'code' => $exception->getCode(),
@@ -393,7 +412,9 @@ class Scheduler implements LoggerAwareInterface {
 
         $ec->once('action.failed', function($action, $exception) {
             if ($this->state->state() === State::RECOVERY) {
-                $this->setRecoveryCooldown();
+                /** Abandon this recovery attempt. The attempt was already counted when recovery began;
+                 * the cooldown file it wrote paces the retry on the next boot.
+                 */
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });
@@ -409,7 +430,9 @@ class Scheduler implements LoggerAwareInterface {
         $ec->once('process.error', function($actionName, $error) {
             //Only call shutdown once if we fail during recovery
             if ($this->state->state() === State::RECOVERY) {
-                $this->setRecoveryCooldown();
+                /** Abandon this recovery attempt. The attempt was already counted when recovery began;
+                 * the cooldown file it wrote paces the retry on the next boot.
+                 */
                 $this->loop->futureTick(function() {
                     $this->shutdown();
                 });
@@ -485,9 +508,20 @@ class Scheduler implements LoggerAwareInterface {
         });
     }
 
-    public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [], object|array|null $schema = null) : void
+    /**
+     * @param string $name
+     * @param string|array|callable $cmd
+     * @param string|null $wd
+     * @param bool|null $singleShot
+     * @param array $env
+     * @param object|array|null $schema
+     * @param bool $replayOnRecovery If false the action is never replayed after an engine restart, even if it was
+     *                               inflight or errored when the engine stopped. Set this for actions that restart
+     *                               the engine (or are otherwise disruptive) to prevent a recovery replay loop.
+     */
+    public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [], object|array|null $schema = null, bool $replayOnRecovery = true) : void
     {
-        $this->actionExecutionCoordinator->register_action($name, $cmd, $wd, $singleShot, $env, $schema);
+        $this->actionExecutionCoordinator->register_action($name, $cmd, $wd, $singleShot, $env, $schema, $replayOnRecovery);
     }
 
     /**
@@ -499,11 +533,15 @@ class Scheduler implements LoggerAwareInterface {
         $dir = dirname($filename);
         $this->recoveryMarkerFile = $dir . '/.' . basename($filename) . '.recovery';
         $this->recoveryCooldownFile = $dir . '/.' . basename($filename) . '.cooldown';
-
         $memoryFile = $dir . '/.' . basename($filename) . '.memory.json';
         $this->collectiveMemory = new MemoryEngine(new JsonFileBackend($memoryFile));
         $this->collectiveMemory->setLogger($this->logger);
         $this->engine->setMemoryEngine($this->collectiveMemory);
+    }
+
+    public function getSavefileName() : string
+    {
+        return $this->saveFileName;
     }
 
     /**
@@ -643,10 +681,30 @@ class Scheduler implements LoggerAwareInterface {
                     $this->saveStateHandler->saveStateSync($this->buildState());
                     $this->sourceExecutionCoordinator->initialise_input_processes();
                     $this->state->transition(State::RUNNING);
+                    $this->dispatchDeferredActions();
                 }
             });
         };
         $this->loop->futureTick($dispatchBatch);
+    }
+
+    /**
+     * Re-dispatch actions that were inflight when the engine was intentionally stopped (eg a planned restart).
+     * A reboot is not a fault, so these were not journalled as errored - they are re-run once we are running.
+     * Actions registered with replayOnRecovery disabled (eg an action that restarts the engine) are dropped.
+     */
+    protected function dispatchDeferredActions() : void
+    {
+        while (count($this->deferredActionCommands)) {
+            $action = array_shift($this->deferredActionCommands);
+            $cmd = $action['cmd'] ?? '';
+            if (!$this->actionExecutionCoordinator->isReplayable($cmd)) {
+                $this->logger->notice("Dropping deferred action {$cmd} which is configured not to replay after a restart");
+                continue;
+            }
+            $this->logger->notice("Re-dispatching action {$cmd} which was inflight when the engine was last stopped");
+            $this->engine->emit('action', [new Action($cmd, $action['vars'] ?? [])]);
+        }
     }
 
     /**
@@ -817,7 +875,7 @@ class Scheduler implements LoggerAwareInterface {
 
         /** Check for recovery marker before restoring state */
         if ($this->hasRecoveryMarker()) {
-            $this->logger->emergency("*** Guru Mediation Required ***. Recovery marker file detected - previous recovery attempt did not complete. Halting to prevent reboot loop.");
+            $this->logger->emergency("*** Guru Mediation Required ***. Recovery marker file detected - previous recovery attempts failed repeatedly. Halting to prevent reboot loop.");
             $this->logger->emergency("Remove marker file: {$this->recoveryMarkerFile}");
             $this->logger->emergency("Or check logs to determine why recovery failed.");
             // Don't exit - that would trigger systemd/docker restart
@@ -895,11 +953,14 @@ class Scheduler implements LoggerAwareInterface {
         if ($erroredActions) {
             //Function based actions will run straight away and may error again (@TODO: Can we delay function based actions)
             $this->erroredActionCommands = [];
-            $this->logger->notice('Beginning failed action recovery process');
-            $this->createRecoveryMarker();
-            $this->state->transition(State::RECOVERY);
             $retryable = [];
             foreach($erroredActions as $errored) {
+                $cmd = $errored['action']['cmd'] ?? '';
+                if (!$this->actionExecutionCoordinator->isReplayable($cmd)) {
+                    //Disruptive actions (eg one that restarts the engine) must never be replayed or they self-perpetuate
+                    $this->logger->notice("Action {$cmd} is configured not to replay after a restart, dropping from recovery queue");
+                    continue;
+                }
                 if (is_array($errored['error'])) {
                     $code = $errored['error']['code'] ?? 0;
                     if ($code < 0 && $code !== Error::INTERNAL_ERROR) {
@@ -911,18 +972,26 @@ class Scheduler implements LoggerAwareInterface {
             }
             if ($retryable) {
                 unset($erroredActions);
+                $this->logger->notice('Beginning failed action recovery process');
+                //Count this recovery attempt. The marker file is only created when recovery has failed repeatedly and
+                //needs operator intervention, so an interrupted recovery (eg a planned restart) never strands a marker.
+                $this->setRecoveryCooldown();
+                $this->state->transition(State::RECOVERY);
                 $this->replayActions($retryable);
             } else {
-                //No actions were retryable so we continue with booting the Scheduler
+                //No actions were retryable (eg actions terminated at a planned shutdown). Not a fault; continue booting.
+                $this->logger->notice('No retryable actions from previous execution. No recovery required');
                 $this->clearRecoveryMarker();
                 $this->state->transition(State::STARTING);
                 $this->saveStateHandler->saveStateSync($this->buildState());
                 $this->sourceExecutionCoordinator->initialise_input_processes();
                 $this->state->transition(State::RUNNING);
+                $this->dispatchDeferredActions();
             }
         } else {
             $this->sourceExecutionCoordinator->initialise_input_processes();
             $this->state->transition(State::RUNNING);
+            $this->dispatchDeferredActions();
         }
 
         /** Initialise the state saving task */
@@ -964,11 +1033,13 @@ class Scheduler implements LoggerAwareInterface {
         // ctrl+c
         $this->loop->addSignal(SIGINT, function() {
             $this->logger->debug( "received SIGINT scheduling shutdown...");
+            $this->plannedShutdown = true;
             $this->shutdown();
         });
         // kill
         $this->loop->addSignal(SIGTERM, function() {
             $this->logger->debug("received SIGTERM scheduling shutdown...");
+            $this->plannedShutdown = true;
             $this->shutdown();
         });
         // logout
@@ -1070,6 +1141,10 @@ class Scheduler implements LoggerAwareInterface {
             $this->logger->debug("Event Loop stopped");
             if (isset($this->saveStateHandler)) {
                 $this->persistMemory();
+                if ($this->plannedShutdown) {
+                    /** A planned stop/restart is not a fault. Never leave a recovery marker or cooldown behind for it */
+                    $this->clearRecoveryMarker();
+                }
                 $this->saveStateHandler->saveStateSync($this->buildState()); //Loop is stopped. Do a blocking synchronous save of current state prior to exit.
                 unset($this->saveStateHandler);
             }
@@ -1107,7 +1182,7 @@ class Scheduler implements LoggerAwareInterface {
         $state['memoryPercentageUsed'] = $this->memoryManager->getPercentUsed();
         $state['saveFileSizeBytes'] = $this->saveStateHandler?->lastSaveSizeBytes();
         $state['saveStateLastDuration'] = $this->saveStateHandler?->lastSaveWriteDuration();
-        //@TODO add a clean shutdown flag here in save state
+        $state['cleanShutdown'] = $this->plannedShutdown;
         return $state;
     }
 
@@ -1117,6 +1192,10 @@ class Scheduler implements LoggerAwareInterface {
     protected function setState(array $state) : void
     {
         $this->sourceExecutionCoordinator->setInputProcessesCheckpoints($state['input']['checkpoints'] ?? []);
+        /** If the engine was stopped deliberately (eg a planned restart) then inflight actions are not a fault.
+         * They are deferred and re-dispatched once we reach running, rather than entering the recovery process.
+         */
+        $cleanShutdown = (bool)($state['cleanShutdown'] ?? false);
         /** If we had any actions still processing when we last saved state then move those to errored as we don't know if they completed */
         /** @TODO, this could be a big array, we need to handle that in a memory sensitive way */
         $errored = $state['actions']['errored'] ?? [];
@@ -1130,11 +1209,15 @@ class Scheduler implements LoggerAwareInterface {
                 $this->logger->warning("Large number of failed actions. Memory consumption for state table may be large.");
             }
         }
-        /** @TODO: Fix up */
         if (true === static::PRESERVE_FAILED_EVENTS_ONLOAD) {
             $this->erroredActionCommands = $errored;
             while(count($inflight)) {
                 $action = array_shift($inflight);
+                if ($cleanShutdown) {
+                    $this->logger->notice("Action " . ($action['cmd'] ?? 'unknown') . " was inflight when the engine was intentionally stopped. Deferring until running");
+                    $this->deferredActionCommands[] = $action;
+                    continue;
+                }
                 $this->erroredActionCommands[] = [
                     'error' => [
                         'code' => 2,

@@ -234,4 +234,163 @@ EOF;
         $this->assertEquals(['recovery','running','stopping','stopped'], $progress, "Scheduler state transitions not expected");
     }
 
+    /**
+     * A planned shutdown (cleanShutdown flag persisted in state) is not a fault. Inflight actions from the
+     * restart must be deferred and re-dispatched once running, not journalled as errored, and must never
+     * put a recovery marker on disk. The restart action itself (replayOnRecovery disabled) must be dropped.
+     */
+    public function testPlannedRestartDefersInflightWithoutRecovery(): void
+    {
+        $scheduler = $this->buildObservableScheduler();
+        $tempState = $scheduler->getSavefileName();
+        $scheduler->setLogger(new TestLogger());
+
+        $inflight = [
+            '4594572349.3f59081b' => ['cmd' => 'normal_job', 'vars' => []],
+            '212154.3f59081b' => ['cmd' => 'restart_engine', 'vars' => []],
+        ];
+        $state = [
+            'engine' => [
+                'eventstream_live' => true,
+                'matchers' => [],
+                'events' => [],
+                'statistics' => ['seen' => [], 'init_matcher' => [], 'handled' => []],
+            ],
+            'scheduler' => [
+                'state' => 'stopped',
+                'input' => ['checkpoints' => []],
+                'actions' => ['inflight' => $inflight, 'errored' => []],
+                'cleanShutdown' => true,
+            ],
+        ];
+        file_put_contents($tempState, json_encode($state));
+
+        $normal_completed = 0;
+        $scheduler->register_action('normal_job', function () {
+            $def = new \React\Promise\Deferred();
+            Loop::addTimer(0.05, static function () use ($def) {
+                $def->resolve('ok');
+            });
+            return $def->promise();
+        });
+        $restart_ran = false;
+        $scheduler->register_action('restart_engine', function () use (&$restart_ran) {
+            $restart_ran = true;
+            return true;
+        }, replayOnRecovery: false);
+
+        $progress = [];
+        $markerAtRunning = null;
+        $scheduler->on('recovery', function() use (&$progress) {
+            $progress[] = 'recovery';
+        });
+        $scheduler->on('running', function() use (&$progress, &$markerAtRunning, $scheduler) {
+            $progress[] = 'running';
+            $markerAtRunning = file_exists($scheduler->getRecoveryMarkerPath());
+            Loop::addTimer(0.5, $scheduler->shutdown(...)); //Give the deferred action time to complete
+        });
+        $scheduler->on('stopping', function() use (&$progress) {
+            $progress[] = 'stopping';
+        });
+        $scheduler->on('stopped', function() use (&$progress) {
+            $progress[] = 'stopped';
+        });
+        $scheduler->on('action.completed', function($action) use (&$normal_completed) {
+            if ($action->getCmd() === 'normal_job') {
+                $normal_completed++;
+            }
+        });
+
+        Loop::addTimer(5, $scheduler->exit(...)); //Die after 5 seconds
+
+        $scheduler->run();
+
+        $this->assertSame(['running','stopping','stopped'], $progress, "Planned restart must not enter recovery and state transitions not as expected");
+        $this->assertSame(1, $normal_completed, "Inflight action from a planned restart was not re-dispatched after running");
+        $this->assertFalse($restart_ran, "Restart action must never be replayed after a restart");
+        $this->assertFalse($markerAtRunning, "No recovery marker should exist while running");
+        $this->assertFileDoesNotExist($scheduler->getRecoveryMarkerPath(), "Marker file stranded on disk after planned restart");
+    }
+
+    /**
+     * An unclean shutdown with errored actions still triggers recovery, but an action registered with
+     * replayOnRecovery disabled must be dropped from the replay queue (otherwise it would restart the
+     * engine from within recovery and self-perpetuate). The marker file must only appear when recovery
+     * has definitively failed, never while the engine is running.
+     */
+    public function testUnreplayableActionDroppedFromRecoveryAndNoMarkerStranded(): void
+    {
+        $scheduler = $this->buildObservableScheduler();
+        $tempState = $scheduler->getSavefileName();
+        $scheduler->setLogger(new TestLogger());
+
+        $state = [
+            'engine' => [
+                'eventstream_live' => true,
+                'matchers' => [],
+                'events' => [],
+                'statistics' => ['seen' => [], 'init_matcher' => [], 'handled' => []],
+            ],
+            'scheduler' => [
+                'state' => 'unclean shutdown',
+                'input' => ['checkpoints' => []],
+                'actions' => [
+                    'inflight' => [],
+                    'errored' => [
+                        ['error' => ['code' => 2, 'message' => 'Inflight when process exited'], 'action' => ['cmd' => 'replay_job', 'vars' => []]],
+                        ['error' => ['code' => 2, 'message' => 'Inflight when process exited'], 'action' => ['cmd' => 'restart_engine', 'vars' => []]],
+                    ],
+                ],
+                'cleanShutdown' => false,
+            ],
+        ];
+        file_put_contents($tempState, json_encode($state));
+
+        $replay_completed = 0;
+        $scheduler->register_action('replay_job', function () {
+            $def = new \React\Promise\Deferred();
+            Loop::addTimer(0.05, static function () use ($def) {
+                $def->resolve('ok');
+            });
+            return $def->promise();
+        });
+        $restart_ran = false;
+        $scheduler->register_action('restart_engine', function () use (&$restart_ran) {
+            $restart_ran = true;
+            return true;
+        }, replayOnRecovery: false);
+
+        $progress = [];
+        $markerAtRecovery = null;
+        $scheduler->on('recovery', function() use (&$progress, &$markerAtRecovery, $scheduler) {
+            $progress[] = 'recovery';
+            $markerAtRecovery = file_exists($scheduler->getRecoveryMarkerPath());
+        });
+        $scheduler->on('running', function() use (&$progress, $scheduler) {
+            $progress[] = 'running';
+            Loop::addTimer(0.5, $scheduler->shutdown(...));
+        });
+        $scheduler->on('stopping', function() use (&$progress) {
+            $progress[] = 'stopping';
+        });
+        $scheduler->on('stopped', function() use (&$progress) {
+            $progress[] = 'stopped';
+        });
+        $scheduler->on('action.completed', function($action) use (&$replay_completed) {
+            if ($action->getCmd() === 'replay_job') {
+                $replay_completed++;
+            }
+        });
+
+        Loop::addTimer(5, $scheduler->exit(...)); //Die after 5 seconds
+
+        $scheduler->run();
+
+        $this->assertSame(['recovery','running','stopping','stopped'], $progress, "Scheduler state transitions not expected");
+        $this->assertSame(1, $replay_completed, "Retryable action should have been replayed during recovery");
+        $this->assertFalse($restart_ran, "Restart action must never be replayed from within recovery");
+        $this->assertFalse($markerAtRecovery, "Marker must not be created merely for starting recovery");
+        $this->assertFileDoesNotExist($scheduler->getRecoveryMarkerPath(), "Marker file stranded after successful recovery");
+        $this->assertFileDoesNotExist($scheduler->getRecoveryCooldownPath(), "Cooldown file should be cleared after successful recovery");
+    }
 }

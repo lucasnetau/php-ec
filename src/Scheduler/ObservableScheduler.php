@@ -87,6 +87,14 @@ class ObservableScheduler extends Scheduler implements EventEmitterInterface {
         return $this->erroredActionCommands;
     }
 
+    public function getDeferredActions() : array {
+        return $this->deferredActionCommands;
+    }
+
+    public function isPlannedShutdown() : bool {
+        return $this->plannedShutdown;
+    }
+
     public function getNextScheduledTimer() : DateTimeImmutable|null {
         if ($this->engine->nextTimer === null) {
             return null;

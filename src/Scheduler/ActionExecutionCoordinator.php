@@ -98,10 +98,25 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
      * @param bool|null $singleShot
      * @param array $env
      * @param object|array|null $schema Validate action's parameters with a JSONSchema object (json_decode output)
+     * @param bool $replayOnRecovery If false, this action will never be replayed after an engine restart, even if it
+     *                               was inflight or errored when the engine stopped. Use for actions with disruptive
+     *                               side effects on engine lifecycle (eg an action that restarts the engine itself).
      */
-    public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [], object|array|null $schema = null) : void
+    public function register_action(string $name, string|array|callable $cmd, ?string $wd = null, ?bool $singleShot = false, array $env = [], object|array|null $schema = null, bool $replayOnRecovery = true) : void
     {
-        $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot, 'schema' => $schema];
+        $this->actionConfig[$name] = ['cmd' => $cmd, 'wd' => $wd, 'env' => $env, 'singleShot' => $singleShot, 'schema' => $schema, 'replayOnRecovery' => $replayOnRecovery];
+    }
+
+    /**
+     * Whether an action may be replayed (recovered) after an engine restart.
+     * Unknown actions are considered replayable as they may be registered later by the application.
+     */
+    public function isReplayable(string $actionName): bool
+    {
+        if (!isset($this->actionConfig[$actionName])) {
+            return true;
+        }
+        return ($this->actionConfig[$actionName]['replayOnRecovery'] ?? true) !== false;
     }
 
     /**
