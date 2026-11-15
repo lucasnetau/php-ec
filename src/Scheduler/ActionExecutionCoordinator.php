@@ -28,6 +28,7 @@ use Psr\Log\LoggerAwareTrait;
 use Psr\Log\LogLevel;
 use React\ChildProcess\Process;
 use React\EventLoop\Loop;
+use React\EventLoop\TimerInterface;
 use React\Promise\Promise;
 use Throwable;
 use function array_filter;
@@ -46,6 +47,7 @@ use function trim;
 use function gzencode;
 use function EdgeTelemetrics\EventCorrelation\rpcCompressionAvailable;
 use function EdgeTelemetrics\EventCorrelation\rpcCompressionLevel;
+use function EdgeTelemetrics\EventCorrelation\rpcMaxRequestBytes;
 use function zstd_compress_add;
 use function zstd_compress_init;
 
@@ -86,6 +88,21 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
 
     /** @var array<string, \Zstd\Compress\Context> */
     protected array $zstdContexts = [];
+
+    /** @var array<string, bool> Whether the action has sent rpc.hello */
+    protected array $actionHelloReceived = [];
+
+    /** @var array<string, int> Maximum request size advertised by the action via rpc.hello */
+    protected array $actionMaxRequestBytes = [];
+
+    /** @var array<string, array<string, string>> Request frames waiting for rpc.hello, keyed action => uniqid => json */
+    protected array $pendingActionWrites = [];
+
+    /** @var array<string, TimerInterface> Grace timers for actions that never send rpc.hello */
+    protected array $actionHelloTimers = [];
+
+    /** @var float Seconds to wait for rpc.hello before falling back to the scheduler's own limit */
+    const HELLO_GRACE_SECONDS = 1.0;
 
     public function __construct() {
         $this->inflightActionClosures = new \WeakMap();
@@ -137,6 +154,12 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $env['PHPEC_RPC_COMPRESSION'] = $compress;
             }
             $this->actionCompression[$actionName] = $compress;
+            $this->actionHelloReceived[$actionName] = false;
+            unset($this->actionMaxRequestBytes[$actionName]);
+            //Pass the scheduler's frame limit down unless the action config sets its own; rpc.hello reports the final value
+            if (!isset($env['PHPEC_RPC_MAX_BYTES'])) {
+                $env['PHPEC_RPC_MAX_BYTES'] = (string)rpcMaxRequestBytes();
+            }
 
             /** If there is no running action then we initialise the process **/
             if (is_string($actionConfig['cmd'])) {
@@ -174,7 +197,7 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 $this->logger->error("$actionName message: " . trim($data));
             });
 
-            $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
+            $process_decoded_stdout = new JsonRpcDecoder( $process->stdout, rpcMaxRequestBytes() );
 
             $this->actionStdoutPacketSizes[$actionName] = [
                 'uncompressed' => new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576 ),
@@ -219,6 +242,8 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     if ($rpc->getMethod() === Scheduler::RPC_PROCESS_LOG) {
                         //Log action expects logLevel to match \Psr\Log\LogLevel
                         $this->logger->log($rpc->getParam('logLevel'), $rpc->getParam('message'), $rpc->getParam('context') ?? []);
+                    } elseif ($rpc->getMethod() === Scheduler::RPC_HELLO) {
+                        $this->handleHello($actionName, $rpc);
                     }
                 }
             });
@@ -258,6 +283,13 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                 unset($this->deflateContexts[$actionName]);
                 unset($this->zstdContexts[$actionName]);
                 unset($this->actionCompression[$actionName]);
+                unset($this->actionHelloReceived[$actionName]);
+                unset($this->actionMaxRequestBytes[$actionName]);
+                unset($this->pendingActionWrites[$actionName]);
+                if (isset($this->actionHelloTimers[$actionName])) {
+                    Loop::cancelTimer($this->actionHelloTimers[$actionName]);
+                    unset($this->actionHelloTimers[$actionName]);
+                }
                 $this->checkIdle();
                 $this->emit('dirty');
             });
@@ -330,31 +362,104 @@ class ActionExecutionCoordinator implements \Evenement\EventEmitterInterface, Lo
                     ];
                 }
                 $this->actionStdinPacketSizes[$actionName]['uncompressed']->add(strlen($json));
-                if ('zstd' === $compress && isset($this->zstdContexts[$actionName])) {
-                    $compressed = zstd_compress_add($this->zstdContexts[$actionName], $json);
-                    if (false === $compressed) {
-                        $ex = new \RuntimeException("Failed to compress request for action $actionName", -1);
-                        $this->logger->critical($ex->getMessage());
-                        $this->emit('action.failed', ['action' => $action, 'exception' => $ex]);
-                        $action->emit('failed', ['exception' => $ex]);
-                        unset($this->inflightActionCommands[$uniqid]);
-                        return;
-                    }
-                    $this->actionStdinPacketSizes[$actionName]['compressed']?->add(strlen($compressed));
-                    $process->stdin->write($compressed);
-                } elseif ('deflate' === $compress && isset($this->deflateContexts[$actionName])) {
-                    $compressed = deflate_add($this->deflateContexts[$actionName], $json, ZLIB_SYNC_FLUSH);
-                    $this->actionStdinPacketSizes[$actionName]['compressed']?->add(strlen($compressed));
-                    $process->stdin->write($compressed);
+                if ($this->actionHelloReceived[$actionName] ?? false) {
+                    $this->writeActionRequest($actionName, $uniqid, $json);
                 } else {
-                    $process->stdin->write($json);
+                    //Defer until rpc.hello so an oversized first request cannot kill the action
+                    $this->pendingActionWrites[$actionName][$uniqid] = $json;
+                    if (!isset($this->actionHelloTimers[$actionName])) {
+                        $this->actionHelloTimers[$actionName] = Loop::addTimer(static::HELLO_GRACE_SECONDS, function () use ($actionName) {
+                            unset($this->actionHelloTimers[$actionName]);
+                            $this->flushPendingActionWrites($actionName);
+                        });
+                    }
                 }
-                $this->emit('action.started', ['action' => $action, ]);
-                $action->emit('started');
             }
         } else {
             $this->emit('action.undefined', ['action' => $action]);
         }
+    }
+
+    /**
+     * Handle the action's rpc.hello capability advertisement.
+     */
+    protected function handleHello(string $actionName, JsonRpcNotification $hello): void
+    {
+        $max = (int)($hello->getParam('maxRequestBytes') ?? 0);
+        if ($max > 0) {
+            $this->actionMaxRequestBytes[$actionName] = $max;
+            if ($max < rpcMaxRequestBytes()) {
+                $this->logger->warning("Action {actionName} advertises a smaller RPC buffer than the scheduler", ['actionName' => $actionName, 'actionMax' => $max, 'schedulerMax' => rpcMaxRequestBytes()]);
+            }
+        }
+        $compression = (string)($hello->getParam('compression') ?? '');
+        if ($compression !== ($this->actionCompression[$actionName] ?? '')) {
+            $this->logger->error("Action {actionName} reported compression '{compression}' but the scheduler resolved '{expected}'", ['actionName' => $actionName, 'compression' => $compression, 'expected' => $this->actionCompression[$actionName] ?? '']);
+        }
+        $this->actionHelloReceived[$actionName] = true;
+        $this->flushPendingActionWrites($actionName);
+    }
+
+    protected function flushPendingActionWrites(string $actionName): void
+    {
+        if (isset($this->actionHelloTimers[$actionName])) {
+            Loop::cancelTimer($this->actionHelloTimers[$actionName]);
+            unset($this->actionHelloTimers[$actionName]);
+        }
+        $pending = $this->pendingActionWrites[$actionName] ?? [];
+        unset($this->pendingActionWrites[$actionName]);
+        foreach ($pending as $uniqid => $json) {
+            $this->writeActionRequest($actionName, $uniqid, $json);
+        }
+    }
+
+    /**
+     * Write one encoded request to the action, rejecting it with a per-request
+     * error when it exceeds the size the action advertised (or our own limit).
+     */
+    protected function writeActionRequest(string $actionName, string $uniqid, string $json): void
+    {
+        if (!isset($this->inflightActionCommands[$uniqid]) || !isset($this->runningActions[$actionName])) {
+            return; //Process exited or the command was cleaned up while waiting
+        }
+        $process = $this->runningActions[$actionName];
+        $action = $this->inflightActionCommands[$uniqid]['action'];
+        $bytes = strlen($json) - 1; //Exclude the framing newline counted by the decoder
+        $max = $this->actionMaxRequestBytes[$actionName] ?? rpcMaxRequestBytes();
+        if ($bytes > $max) {
+            $ex = new \RuntimeException("RPC request of $bytes bytes exceeds the maximum of $max bytes for action $actionName", Error::INVALID_REQUEST);
+            $this->logger->error($ex->getMessage(), ['action' => $action]);
+            $this->emit('action.failed', ['action' => $action, 'exception' => $ex]);
+            $action->emit('failed', ['exception' => $ex]);
+            unset($this->inflightActionCommands[$uniqid]);
+            $this->checkIdle();
+            $this->emit('dirty');
+            return;
+        }
+        $compress = $this->actionCompression[$actionName] ?? '';
+        if ('zstd' === $compress && isset($this->zstdContexts[$actionName])) {
+            $compressed = zstd_compress_add($this->zstdContexts[$actionName], $json);
+            if (false === $compressed) {
+                $ex = new \RuntimeException("Failed to compress request for action $actionName", -1);
+                $this->logger->critical($ex->getMessage());
+                $this->emit('action.failed', ['action' => $action, 'exception' => $ex]);
+                $action->emit('failed', ['exception' => $ex]);
+                unset($this->inflightActionCommands[$uniqid]);
+                $this->checkIdle();
+                $this->emit('dirty');
+                return;
+            }
+            $this->actionStdinPacketSizes[$actionName]['compressed']?->add(strlen($compressed));
+            $process->stdin->write($compressed);
+        } elseif ('deflate' === $compress && isset($this->deflateContexts[$actionName])) {
+            $compressed = deflate_add($this->deflateContexts[$actionName], $json, ZLIB_SYNC_FLUSH);
+            $this->actionStdinPacketSizes[$actionName]['compressed']?->add(strlen($compressed));
+            $process->stdin->write($compressed);
+        } else {
+            $process->stdin->write($json);
+        }
+        $this->emit('action.started', ['action' => $action]);
+        $action->emit('started');
     }
 
     private function checkIdle() : void {

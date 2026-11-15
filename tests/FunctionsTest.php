@@ -13,6 +13,7 @@ use function EdgeTelemetrics\EventCorrelation\php_cmd;
 use function EdgeTelemetrics\EventCorrelation\rpcCompressionAlgorithm;
 use function EdgeTelemetrics\EventCorrelation\rpcCompressionAvailable;
 use function EdgeTelemetrics\EventCorrelation\rpcLogMessage;
+use function EdgeTelemetrics\EventCorrelation\rpcMaxRequestBytes;
 use function EdgeTelemetrics\EventCorrelation\wrap_source_php_cmd;
 
 require_once __DIR__ . '/../vendor/autoload.php';
@@ -118,5 +119,24 @@ class FunctionsTest extends TestCase {
         $this->assertSame($zstd ? 'zstd' : 'deflate', rpcCompressionAvailable('zstd'));
         $this->assertSame('deflate', rpcCompressionAvailable('1'));
         $this->assertSame('', rpcCompressionAvailable(''));
+    }
+
+    public function testRpcMaxRequestBytesDefaultAndOverride() : void {
+        putenv('PHPEC_RPC_MAX_BYTES');
+        $this->assertSame(Scheduler::DEFAULT_RPC_MAX_BYTES, rpcMaxRequestBytes());
+
+        putenv('PHPEC_RPC_MAX_BYTES=2048');
+        try {
+            $this->assertSame(2048, rpcMaxRequestBytes());
+        } finally {
+            putenv('PHPEC_RPC_MAX_BYTES');
+        }
+
+        putenv('PHPEC_RPC_MAX_BYTES=bogus');
+        try {
+            $this->assertSame(Scheduler::DEFAULT_RPC_MAX_BYTES, rpcMaxRequestBytes());
+        } finally {
+            putenv('PHPEC_RPC_MAX_BYTES');
+        }
     }
 }

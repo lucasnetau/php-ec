@@ -238,6 +238,19 @@ if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcCompressionLevel')) {
     }
 }
 
+if (! function_exists('EdgeTelemetrics\EventCorrelation\rpcMaxRequestBytes')) {
+    /**
+     * Maximum JSON-RPC frame size. PHPEC_RPC_MAX_BYTES overrides the default on
+     * both the scheduler and the action/source process side.
+     */
+    function rpcMaxRequestBytes(): int
+    {
+        $env = getenv('PHPEC_RPC_MAX_BYTES');
+        $max = ($env !== false && $env !== '') ? (int)$env : Scheduler::DEFAULT_RPC_MAX_BYTES;
+        return $max > 0 ? $max : Scheduler::DEFAULT_RPC_MAX_BYTES;
+    }
+}
+
 if (! function_exists('EdgeTelemetrics\EventCorrelation\setupErrorHandling')) {
     function setupErrorHandling(bool $usingEventLoop) : void
     {

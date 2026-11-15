@@ -233,6 +233,12 @@ class Scheduler implements LoggerAwareInterface {
     /** @var string RPC method name to get an action handler to run a request */
     const ACTION_RUN_METHOD = 'run';
 
+    /** @var string RPC method an action uses to advertise its capabilities on startup */
+    const RPC_HELLO = 'rpc.hello';
+
+    /** @var int Default maximum JSON-RPC frame size in bytes (overridable with PHPEC_RPC_MAX_BYTES) */
+    const DEFAULT_RPC_MAX_BYTES = 1048576;
+
     /**
      * @var MemoryManager
      */

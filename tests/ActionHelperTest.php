@@ -65,9 +65,13 @@ class ActionHelperTest extends TestCase {
         $log = null;
         $response = null;
         $errorResponse = null;
+        $hello = null;
         foreach ($messages as $message) {
             if (($message['method'] ?? null) === Scheduler::RPC_PROCESS_LOG) {
                 $log = $message;
+            }
+            if (($message['method'] ?? null) === Scheduler::RPC_HELLO) {
+                $hello = $message;
             }
             if (($message['id'] ?? null) === 'test-request-1') {
                 $response = $message;
@@ -77,6 +81,9 @@ class ActionHelperTest extends TestCase {
             }
         }
 
+        $this->assertNotNull($hello, 'ActionHelper must advertise its capabilities with rpc.hello');
+        $this->assertSame(Scheduler::DEFAULT_RPC_MAX_BYTES, $hello['params']['maxRequestBytes']);
+        $this->assertSame('', $hello['params']['compression']);
         $this->assertNotNull($log, 'ActionHelper must forward log() to the scheduler');
         $this->assertSame('Action called : {"answer":42}', $log['params']['message']);
         $this->assertNotNull($response, 'ActionHelper must write the RPC response');

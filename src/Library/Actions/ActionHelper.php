@@ -29,6 +29,7 @@ use React\Stream\WritableResourceStream;
 
 use function EdgeTelemetrics\EventCorrelation\disableOutputBuffering;
 use function EdgeTelemetrics\EventCorrelation\rpcCompressionAlgorithm;
+use function EdgeTelemetrics\EventCorrelation\rpcMaxRequestBytes;
 use function EdgeTelemetrics\EventCorrelation\setupErrorHandling;
 use function fopen;
 use function function_exists;
@@ -59,7 +60,7 @@ class ActionHelper extends EventEmitter {
 
     protected int $exitCode = 0;
 
-    const INPUT_BUFFER_SIZE = 65536;
+    const INPUT_BUFFER_SIZE = Scheduler::DEFAULT_RPC_MAX_BYTES;
 
     public function __construct(array $options = []) {
         setupErrorHandling(true);
@@ -76,7 +77,7 @@ class ActionHelper extends EventEmitter {
             \posix_setpgid(0,0);
         }
 
-        $buffer_size = $options['json_buffer_size'] ?? self::INPUT_BUFFER_SIZE;
+        $buffer_size = $options['json_buffer_size'] ?? rpcMaxRequestBytes();
 
         //Open our own handle to stdin and stdout instead of using STDIN/STDOUT so that when the Stream reader/writes close they don't close STDOUT/STDIN
         $stdin = new ReadableResourceStream(fopen('php://stdin', 'r'));
@@ -106,6 +107,12 @@ class ActionHelper extends EventEmitter {
             $this->output = new Encoder($stdout);
         }
         $this->logger = new JsonRpcLogger(LogLevel::DEBUG, $this->output);
+
+        /** Advertise our capabilities so the scheduler can size requests before writing them */
+        $this->write(new JsonRpcNotification(Scheduler::RPC_HELLO, [
+            'maxRequestBytes' => $buffer_size,
+            'compression' => $algorithm,
+        ]));
 
         $this->input->on('error', function(\Throwable $exception) use ($buffer_size) {
             if ($exception instanceof \OverflowException) {

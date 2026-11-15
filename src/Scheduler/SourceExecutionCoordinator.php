@@ -28,6 +28,7 @@ use Throwable;
 use function array_merge;
 use function count;
 use function EdgeTelemetrics\EventCorrelation\rpcCompressionAvailable;
+use function EdgeTelemetrics\EventCorrelation\rpcMaxRequestBytes;
 use function gettype;
 use function in_array;
 use function is_array;
@@ -212,6 +213,10 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
             //Pass the resolved algorithm down so both sides agree even when zstd falls back
             $env['PHPEC_RPC_COMPRESSION'] = $algorithm;
         }
+        //Pass the scheduler's frame limit down unless the source config sets its own
+        if (!isset($env['PHPEC_RPC_MAX_BYTES'])) {
+            $env['PHPEC_RPC_MAX_BYTES'] = (string)rpcMaxRequestBytes();
+        }
         /** If we have a checkpoint in our save state pass this along to the input process via the ENV */
         if (isset($this->input_processes_checkpoints[$id]))
         {
@@ -264,7 +269,7 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
             $process->stdout = $decompressor;
         }
 
-        $process_decoded_stdout = new JsonRpcDecoder( $process->stdout );
+        $process_decoded_stdout = new JsonRpcDecoder( $process->stdout, rpcMaxRequestBytes() );
 
         $this->inputRpcPacketSizes[$id] = new Histogram(64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576);
 
