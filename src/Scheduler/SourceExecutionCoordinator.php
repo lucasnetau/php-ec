@@ -402,6 +402,10 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
     public function pauseAllProcesses(): void
     {
         foreach ($this->input_processes as $processId => $process) {
+            /** Source functions cannot be suspended in place; their terminate() ignores SIGSTOP */
+            if ($process instanceof SourceFunction) {
+                continue;
+            }
             if ($process->isRunning()) {
                 $process->terminate(SIGSTOP);
                 $this->logger->debug("Paused input process {id}", ['id' => $processId,]);
@@ -415,6 +419,10 @@ class SourceExecutionCoordinator implements EventEmitterInterface, LoggerAwareIn
     public function resumeAllProcesses(): void
     {
         foreach ($this->input_processes as $processId => $process) {
+            /** Source functions cannot be suspended in place; their terminate() ignores SIGCONT */
+            if ($process instanceof SourceFunction) {
+                continue;
+            }
             $process->terminate(SIGCONT);
             $this->logger->debug("Resuming input process {id}", ['id' => $processId,]);
         }

@@ -64,6 +64,10 @@ abstract class SourceFunction implements LoggerAwareInterface, EventEmitterInter
         $this->functionStop();
     }
 
+    public function isRunning() : bool {
+        return $this->running;
+    }
+
     public function isStopped() : bool {
         return !$this->running;
     }

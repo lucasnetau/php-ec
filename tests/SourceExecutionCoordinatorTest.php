@@ -3,6 +3,7 @@
 namespace EdgeTelemetrics\EventCorrelation\Tests;
 
 use EdgeTelemetrics\EventCorrelation\Scheduler\SourceExecutionCoordinator;
+use EdgeTelemetrics\EventCorrelation\Scheduler\SourceFunction;
 use PHPUnit\Framework\TestCase;
 use React\EventLoop\Loop;
 use VStelmakh\PsrTestLogger\TestLogger;
@@ -40,6 +41,39 @@ class SourceExecutionCoordinatorTest extends TestCase {
 
         $this->assertSame(1, $runs, 'On-demand source must only run once');
         $this->assertFalse($allStopped, 'On-demand completion must not signal all processes stopped');
+    }
+
+    public function testPauseAndResumeHandleSourceFunctions() : void {
+        $coordinator = new SourceExecutionCoordinator(Loop::get());
+        $coordinator->setLogger(new TestLogger());
+
+        $source = new class extends SourceFunction {
+            public int $stopCalls = 0;
+
+            public function functionStart(mixed $checkpoint): void {}
+
+            public function functionStop(): void {
+                $this->stopCalls++;
+            }
+        };
+
+        $coordinator->register_input_process('source-fn', $source);
+        $coordinator->initialise_input_processes();
+        Loop::run();
+
+        $runningSource = $coordinator->getInputProcesses()['source-fn'] ?? null;
+        $this->assertInstanceOf(SourceFunction::class, $runningSource);
+        $this->assertTrue($runningSource->isRunning());
+
+        $coordinator->pauseAllProcesses();
+        $this->assertTrue($runningSource->isRunning(), 'Pausing processes must not stop a source function');
+
+        $coordinator->resumeAllProcesses();
+        $this->assertTrue($runningSource->isRunning());
+
+        $coordinator->shutdown();
+        $this->assertTrue($runningSource->isStopped());
+        $this->assertSame(1, $runningSource->stopCalls);
     }
 
     public function testUnknownProcessIdThrows() : void {
